@@ -56,12 +56,14 @@ export function useOptimizer() {
         const offsets = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
         const placedPieces = new Map<string, { item: InventoryItem, minX: number, minY: number }>();
         const nodeAdjacencies = new Map<string, Set<string>>();
+        const gridItemMap = new Map<string, InventoryItem>();
 
         for (let y = 0; y < 5; y++) {
             for (let x = 0; x < 7; x++) {
                 const boardCell = currentBoard[y][x];
                 if (boardCell && boardCell !== 'Locked') {
                     const cell = inventory.find(i => i.id === boardCell.id) || boardCell;
+                    gridItemMap.set(`${x},${y}`, cell);
 
                     if (!placedPieces.has(cell.id)) {
                         placedPieces.set(cell.id, { item: cell, minX: x, minY: y });
@@ -106,7 +108,43 @@ export function useOptimizer() {
         placedPieces.forEach(({ item }) => {
             if (item.color !== 'White') {
                 const base = getBaseStats(item);
-                const modified = applyInternalEffects(base, item.effects, item.effectValues);
+                let modified = applyInternalEffects(base, item.effects, item.effectValues);
+
+                // Negative Feedback: add 25% of negative base stats of adjacent modules
+                const nfCount = item.effects.filter(e => e === 'Negative Feedback').length;
+                if (nfCount > 0) {
+                    const adjacentNeighborIds = new Set<string>();
+                    gridItemMap.forEach((cellItem, coordStr) => {
+                        if (cellItem.id === item.id) {
+                            const [cx, cy] = coordStr.split(',').map(Number);
+                            offsets.forEach(off => {
+                                const nx = cx + off.x;
+                                const ny = cy + off.y;
+                                const neighborItem = gridItemMap.get(`${nx},${ny}`);
+                                if (neighborItem && neighborItem.id !== item.id && neighborItem.color !== 'White') {
+                                    adjacentNeighborIds.add(neighborItem.id);
+                                }
+                            });
+                        }
+                    });
+
+                    adjacentNeighborIds.forEach(neighborId => {
+                        const neighborItem = Array.from(gridItemMap.values()).find(i => i.id === neighborId);
+                        if (neighborItem) {
+                            const neighborBase = getBaseStats(neighborItem);
+                            if (neighborBase.Performance < 0) {
+                                modified.Performance += nfCount * 0.25 * neighborBase.Performance;
+                            }
+                            if (neighborBase.Quality < 0) {
+                                modified.Quality += nfCount * 0.25 * neighborBase.Quality;
+                            }
+                            if (neighborBase.Efficiency < 0) {
+                                modified.Efficiency += nfCount * 0.25 * neighborBase.Efficiency;
+                            }
+                        }
+                    });
+                }
+
                 internalStats.set(item.id, modified);
             }
         });
