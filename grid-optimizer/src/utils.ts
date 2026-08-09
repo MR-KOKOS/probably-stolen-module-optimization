@@ -74,32 +74,28 @@ export const applyInternalEffects = (item: InventoryItem): Stats => {
 
     item.effects.forEach((effect) => {
         if (effect === 'Premium') {
-            p = Math.trunc(p * 1.2);
-            q = Math.trunc(q * 1.2);
-            e = Math.trunc(e * 1.2);
+            p *= 1.2;
+            q *= 1.2;
+            e *= 1.2;
         }
         else if (effect === 'Inferior') {
-            p = Math.trunc(p * 0.8);
-            q = Math.trunc(q * 0.8);
-            e = Math.trunc(e * 0.8);
+            p *= 0.8;
+            q *= 0.8;
+            e *= 0.8;
         }
         else if (effect === 'Overcharged') {
-            p = Math.trunc(p * 3.0);
-            q = Math.trunc(q * 3.0);
-            e = Math.trunc(e * 3.0);
+            p *= 3.0;
+            q *= 3.0;
+            e *= 3.0;
         }
         else if (effect === 'Negative Feedback') {
-            if (p > 0) p = Math.trunc(p * 1.25);
-            if (q > 0) q = Math.trunc(q * 1.25);
-            if (e > 0) e = Math.trunc(e * 1.25);
+            if (p > 0) p *= 1.25;
+            if (q > 0) q *= 1.25;
+            if (e > 0) e *= 1.25;
         }
     });
 
-    return {
-        Performance: Math.trunc(p),
-        Quality: Math.trunc(q),
-        Efficiency: Math.trunc(e)
-    };
+    return { Performance: p, Quality: q, Efficiency: e };
 };
 
 export const formatStatValue = (val: number) => {

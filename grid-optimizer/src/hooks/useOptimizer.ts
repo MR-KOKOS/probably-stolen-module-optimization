@@ -89,8 +89,8 @@ export function useOptimizer() {
 
                                         const adjModified = applyInternalEffects(adj);
                                         const isPureNegative =
-                                            (adjModified.Performance <= 0 && adjModified.Quality <= 0 && adjModified.Efficiency <= 0) &&
-                                            (adjModified.Performance < 0 || adjModified.Quality < 0 || adjModified.Efficiency < 0);
+                                            (Math.trunc(adjModified.Performance) <= 0 && Math.trunc(adjModified.Quality) <= 0 && Math.trunc(adjModified.Efficiency) <= 0) &&
+                                            (Math.trunc(adjModified.Performance) < 0 || Math.trunc(adjModified.Quality) < 0 || Math.trunc(adjModified.Efficiency) < 0);
 
                                         if (isPureNegative) {
                                             negativeContactCount++;
@@ -113,7 +113,9 @@ export function useOptimizer() {
 
                 const nfCount = item.effects.filter(e => e === 'Negative Feedback').length;
                 if (nfCount > 0) {
+                    let nfPerf = 0, nfQual = 0, nfEff = 0;
                     const adjacentNeighborIds = new Set<string>();
+
                     gridItemMap.forEach((cellItem, coordStr) => {
                         if (cellItem.id === item.id) {
                             const [cx, cy] = coordStr.split(',').map(Number);
@@ -132,22 +134,16 @@ export function useOptimizer() {
                         const neighborItem = Array.from(gridItemMap.values()).find(i => i.id === neighborId);
                         if (neighborItem) {
                             const neighborBase = getEffectiveBaseStats(neighborItem);
-                            if (neighborBase.Performance < 0) {
-                                modified.Performance += Math.trunc(nfCount * 0.25 * neighborBase.Performance);
-                            }
-                            if (neighborBase.Quality < 0) {
-                                modified.Quality += Math.trunc(nfCount * 0.25 * neighborBase.Quality);
-                            }
-                            if (neighborBase.Efficiency < 0) {
-                                modified.Efficiency += Math.trunc(nfCount * 0.25 * neighborBase.Efficiency);
-                            }
+                            if (neighborBase.Performance < 0) nfPerf += neighborBase.Performance;
+                            if (neighborBase.Quality < 0) nfQual += neighborBase.Quality;
+                            if (neighborBase.Efficiency < 0) nfEff += neighborBase.Efficiency;
                         }
                     });
-                }
 
-                modified.Performance = Math.trunc(modified.Performance);
-                modified.Quality = Math.trunc(modified.Quality);
-                modified.Efficiency = Math.trunc(modified.Efficiency);
+                    modified.Performance += (nfCount * 0.25 * nfPerf);
+                    modified.Quality += (nfCount * 0.25 * nfQual);
+                    modified.Efficiency += (nfCount * 0.25 * nfEff);
+                }
 
                 internalStats.set(item.id, modified);
             }
@@ -168,12 +164,17 @@ export function useOptimizer() {
                 }
 
                 if (multiplier > 0) {
-                    p = Math.trunc(p * (1 + multiplier));
-                    q = Math.trunc(q * (1 + multiplier));
-                    e = Math.trunc(e * (1 + multiplier));
+                    p *= (1 + multiplier);
+                    q *= (1 + multiplier);
+                    e *= (1 + multiplier);
                 }
 
-                const finalStats = { Performance: p, Quality: q, Efficiency: e };
+                const finalStats = {
+                    Performance: Math.trunc(p),
+                    Quality: Math.trunc(q),
+                    Efficiency: Math.trunc(e)
+                };
+
                 pieceStats.set(item.id, finalStats);
                 totals.Performance += finalStats.Performance;
                 totals.Quality += finalStats.Quality;
@@ -182,16 +183,23 @@ export function useOptimizer() {
         });
 
         nodeAdjacencies.forEach((adjIds, nodeId) => {
-            const nodeStat = { Performance: 0, Quality: 0, Efficiency: 0 };
+            let nodeP = 0, nodeQ = 0, nodeE = 0;
+
             adjIds.forEach(adjId => {
                 const adjacentItemData = placedPieces.get(adjId);
                 if (adjacentItemData) {
                     const baseAdj = getEffectiveBaseStats(adjacentItemData.item);
-                    nodeStat.Performance += Math.trunc(baseAdj.Performance * 0.20);
-                    nodeStat.Quality += Math.trunc(baseAdj.Quality * 0.20);
-                    nodeStat.Efficiency += Math.trunc(baseAdj.Efficiency * 0.20);
+                    nodeP += baseAdj.Performance;
+                    nodeQ += baseAdj.Quality;
+                    nodeE += baseAdj.Efficiency;
                 }
             });
+
+            const nodeStat = {
+                Performance: Math.trunc(nodeP * 0.20),
+                Quality: Math.trunc(nodeQ * 0.20),
+                Efficiency: Math.trunc(nodeE * 0.20)
+            };
 
             pieceStats.set(nodeId, nodeStat);
             totals.Performance += nodeStat.Performance;
@@ -242,7 +250,7 @@ export function useOptimizer() {
 
         const hasAnyPositiveStats = inventory.some(item => {
             const modified = applyInternalEffects(item);
-            return modified.Performance > 0 || modified.Quality > 0 || modified.Efficiency > 0;
+            return Math.trunc(modified.Performance) > 0 || Math.trunc(modified.Quality) > 0 || Math.trunc(modified.Efficiency) > 0;
         });
 
         let activeGoal = goal;
@@ -252,13 +260,13 @@ export function useOptimizer() {
         } else {
             const hasValidModules = inventory.some(item => {
                 const modified = applyInternalEffects(item);
-                return modified[goal] > 0;
+                return Math.trunc(modified[goal]) > 0;
             });
 
             if (!hasValidModules) {
-                const redCount = inventory.filter(i => applyInternalEffects(i).Performance > 0).length;
-                const yellowCount = inventory.filter(i => applyInternalEffects(i).Quality > 0).length;
-                const greenCount = inventory.filter(i => applyInternalEffects(i).Efficiency > 0).length;
+                const redCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Performance) > 0).length;
+                const yellowCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Quality) > 0).length;
+                const greenCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Efficiency) > 0).length;
 
                 if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) {
                     activeGoal = 'Performance';
@@ -298,7 +306,7 @@ export function useOptimizer() {
             );
 
             const getEffectiveStat = (item: InventoryItem) => {
-                return applyInternalEffects(item)[activeGoal];
+                return Math.trunc(applyInternalEffects(item)[activeGoal]);
             };
 
             const optionalByShape = new Map<string, InventoryItem[]>();
