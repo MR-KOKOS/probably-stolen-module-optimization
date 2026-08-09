@@ -41,26 +41,33 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
     let { Performance: p, Quality: q, Efficiency: e } = base;
 
     effects.forEach((effect, idx) => {
-        const val = effectValues[idx] ?? 0;
+        const customVal = effectValues[idx];
 
         if (effect === 'Premium') { p *= 1.2; q *= 1.2; e *= 1.2; }
         else if (effect === 'Inferior') { p *= 0.8; q *= 0.8; e *= 0.8; }
         else if (effect === 'Overcharged') { p *= 3.0; q *= 3.0; e *= 3.0; }
         else if (effect === 'Degrading') {
-            const mult = Math.max(0, 2.0 - (val * 0.01));
-            if (p !== 0) p *= mult;
-            if (q !== 0) q *= mult;
-            if (e !== 0) e *= mult;
+            if (customVal !== undefined && !isNaN(customVal)) {
+                // Only positive stats change; negative stats remain at base values
+                if (p > 0) p = customVal;
+                if (q > 0) q = customVal;
+                if (e > 0) e = customVal;
+            }
+        }
+        else if (effect === 'Learning Algorithm') {
+            if (customVal !== undefined && !isNaN(customVal)) {
+                // Positive stats take the custom user value
+                if (p > 0) p = customVal;
+                else if (p < 0) p = Math.min(0, p + customVal);
+
+                if (q > 0) q = customVal;
+                else if (q < 0) q = Math.min(0, q + customVal);
+
+                if (e > 0) e = customVal;
+                else if (e < 0) e = Math.min(0, e + customVal);
+            }
         }
         else if (effect === 'Negative Feedback') { p *= 1.25; q *= 1.25; e *= 1.25; }
-        else if (effect === 'Learning Algorithm') {
-            const posMult = Math.min(2.0, val * 0.01);
-            const negFactor = Math.max(0, 1 - (val * 0.01));
-
-            if (p > 0) p *= posMult; else if (p < 0) p *= negFactor;
-            if (q > 0) q *= posMult; else if (q < 0) q *= negFactor;
-            if (e > 0) e *= posMult; else if (e < 0) e *= negFactor;
-        }
     });
 
     return { Performance: p, Quality: q, Efficiency: e };

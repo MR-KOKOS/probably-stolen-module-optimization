@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type {Goal, GridTier, InventoryItem, FilterGroup, ItemEffect, ModuleTemplate, ModuleColor} from './types';
 import { COLOR_MAP, EFFECTS_LIST, MODULE_TEMPLATES, NODE_TEMPLATE } from './constants';
-import { formatStatValue, getStatColor } from './utils';
+import { formatStatValue, getStatColor, getBaseStats } from './utils';
 import { useOptimizer } from './hooks/useOptimizer';
 import MiniShape from './components/MiniShape';
 
@@ -20,32 +20,49 @@ export default function ModuleInventoryUI() {
     const [hoverInfo, setHoverInfo] = useState<{ x: number, y: number, cell: InventoryItem } | null>(null);
 
     const addPieceToInventory = (template: ModuleTemplate) => {
+        const base = getBaseStats(template);
+        // Find the maximum positive stat value
+        const maxPositiveBase = Math.max(
+            base.Performance > 0 ? base.Performance : 0,
+            base.Quality > 0 ? base.Quality : 0,
+            base.Efficiency > 0 ? base.Efficiency : 0
+        );
+        const defaultDoubleBase = maxPositiveBase * 2;
+
         setInventory((prev) => [...prev, {
             id: `${template.shape}_${template.color}_${Math.random().toString(36).substring(2, 8)}`,
             shape: template.shape,
             color: template.color,
             displayName: template.displayName,
             effects: ['None', 'None'],
-            effectValues: [0, 0]
+            effectValues: [defaultDoubleBase, defaultDoubleBase]
         }]);
     };
 
-    const updateItemEffect = (itemId: string, effectIndex: 0 | 1, newEffect: ItemEffect) => {
-        setInventory(prev => prev.map(item => {
-            if (item.id === itemId) {
-                const updatedEffects: [ItemEffect, ItemEffect] = [...item.effects] as [ItemEffect, ItemEffect];
+    const updateItemEffect = (item: InventoryItem, effectIndex: 0 | 1, newEffect: ItemEffect) => {
+        const base = getBaseStats(item);
+        const maxPositiveBase = Math.max(
+            base.Performance > 0 ? base.Performance : 0,
+            base.Quality > 0 ? base.Quality : 0,
+            base.Efficiency > 0 ? base.Efficiency : 0
+        );
+        const defaultDoubleBase = maxPositiveBase * 2;
+
+        setInventory(prev => prev.map(invItem => {
+            if (invItem.id === item.id) {
+                const updatedEffects: [ItemEffect, ItemEffect] = [...invItem.effects] as [ItemEffect, ItemEffect];
                 updatedEffects[effectIndex] = newEffect;
 
-                const updatedValues: [number, number] = [...item.effectValues] as [number, number];
+                const updatedValues: [number, number] = [...invItem.effectValues] as [number, number];
                 if (newEffect === 'Learning Algorithm') {
-                    updatedValues[effectIndex] = 200;
+                    updatedValues[effectIndex] = defaultDoubleBase; // 2x positive base default
                 } else if (newEffect === 'Degrading') {
-                    updatedValues[effectIndex] = 0;
+                    updatedValues[effectIndex] = maxPositiveBase; // Base positive stats default
                 }
 
-                return { ...item, effects: updatedEffects, effectValues: updatedValues };
+                return { ...invItem, effects: updatedEffects, effectValues: updatedValues };
             }
-            return item;
+            return invItem;
         }));
     };
 
@@ -58,6 +75,22 @@ export default function ModuleInventoryUI() {
             }
             return item;
         }));
+    };
+
+    const handleBlurEffectValue = (item: InventoryItem, effectIndex: 0 | 1, rawValue: number) => {
+        const base = getBaseStats(item);
+        const maxPositiveBase = Math.max(
+            base.Performance > 0 ? base.Performance : 0,
+            base.Quality > 0 ? base.Quality : 0,
+            base.Efficiency > 0 ? base.Efficiency : 0
+        );
+        const maxLimit = maxPositiveBase * 2;
+        const minLimit = 0;
+
+        const val = isNaN(rawValue) ? minLimit : rawValue;
+        const clampedValue = Math.max(minLimit, Math.min(maxLimit, val));
+
+        updateItemEffectValue(item.id, effectIndex, clampedValue);
     };
 
     const getCellStyles = (x: number, y: number, cell: any): React.CSSProperties => {
@@ -147,6 +180,14 @@ export default function ModuleInventoryUI() {
           .catalog-card:active {
             transform: translateY(0);
           }
+          input[type=number]::-webkit-inner-spin-button, 
+          input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+          }
+          input[type=number] { 
+            -moz-appearance: textfield; 
+          }
         `}
             </style>
 
@@ -173,7 +214,7 @@ export default function ModuleInventoryUI() {
                             {hoverInfo.cell.effects.filter(e => e !== 'None').map((e) => {
                                 const actualIdx = hoverInfo.cell.effects.indexOf(e as ItemEffect);
                                 const val = hoverInfo.cell.effectValues[actualIdx];
-                                return `${e}${e === 'Learning Algorithm' || e === 'Degrading' ? ` (${val} uses)` : ''}`;
+                                return `${e}${e === 'Learning Algorithm' || e === 'Degrading' ? ` (${val}%)` : ''}`;
                             }).join(', ')}
                         </div>
                     )}
@@ -304,7 +345,7 @@ export default function ModuleInventoryUI() {
                 </div>
             </div>
 
-            {/* BOTTOM: Catalog */}
+            {/* BOTTOM: Catalog & Inventory */}
             <div style={{ display: 'flex', flex: '1', gap: '30px', minHeight: 0 }}>
 
                 {/* Catalog */}
@@ -364,7 +405,7 @@ export default function ModuleInventoryUI() {
                     </div>
                 </div>
 
-                {/* Right Panel: Selected Inventory */}
+                {/* Right Panel: Inventory */}
                 <div style={{ flex: '1', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' }}>
                         <span style={{ color: '#888', fontSize: '0.9em' }}>{inventory.length} Selected</span>
@@ -403,7 +444,7 @@ export default function ModuleInventoryUI() {
                                                         <div key={effectIdx} style={{ display: 'flex', gap: '6px', alignItems: 'center', width: '100%' }}>
                                                             <select
                                                                 value={currentEffect}
-                                                                onChange={(e) => updateItemEffect(item.id, effectIdx as 0 | 1, e.target.value as ItemEffect)}
+                                                                onChange={(e) => updateItemEffect(item, effectIdx as 0 | 1, e.target.value as ItemEffect)}
                                                                 style={{ flex: 1, padding: '2px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px' }}
                                                             >
                                                                 {EFFECTS_LIST.filter(eff => eff === 'None' || eff !== item.effects[effectIdx === 0 ? 1 : 0]).map(eff => (
@@ -412,16 +453,15 @@ export default function ModuleInventoryUI() {
                                                             </select>
 
                                                             {showCustomInput && (
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }} title="Number of Uses">
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }} title="Custom Percentage Value">
                                                                     <input
                                                                         type="number"
-                                                                        min="0"
-                                                                        max="200"
                                                                         value={item.effectValues[effectIdx]}
                                                                         onChange={(e) => updateItemEffectValue(item.id, effectIdx as 0 | 1, Number(e.target.value))}
-                                                                        style={{ width: '42px', padding: '1px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px', textAlign: 'center' }}
+                                                                        onBlur={(e) => handleBlurEffectValue(item, effectIdx as 0 | 1, Number(e.target.value))}
+                                                                        style={{ width: '48px', padding: '1px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px', textAlign: 'center' }}
                                                                     />
-                                                                    <span style={{ fontSize: '0.65em', color: '#aaa' }}>uses</span>
+                                                                    <span style={{ fontSize: '0.65em', color: '#aaa' }}>%</span>
                                                                 </div>
                                                             )}
                                                         </div>
