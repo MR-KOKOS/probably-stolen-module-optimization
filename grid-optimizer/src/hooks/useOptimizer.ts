@@ -97,7 +97,6 @@ export function useOptimizer() {
                                             negativeContactCount++;
                                         }
                                     } else if (adj.id !== cell.id) {
-                                        // Penalize Nodes touching other Nodes
                                         nodeNodeContactCount++;
                                     }
                                 }
@@ -136,21 +135,17 @@ export function useOptimizer() {
                         if (neighborItem) {
                             const neighborBase = getBaseStats(neighborItem);
                             if (neighborBase.Performance < 0) {
-                                modified.Performance += nfCount * 0.25 * neighborBase.Performance;
+                                modified.Performance += Math.trunc(nfCount * 0.25 * neighborBase.Performance);
                             }
                             if (neighborBase.Quality < 0) {
-                                modified.Quality += nfCount * 0.25 * neighborBase.Quality;
+                                modified.Quality += Math.trunc(nfCount * 0.25 * neighborBase.Quality);
                             }
                             if (neighborBase.Efficiency < 0) {
-                                modified.Efficiency += nfCount * 0.25 * neighborBase.Efficiency;
+                                modified.Efficiency += Math.trunc(nfCount * 0.25 * neighborBase.Efficiency);
                             }
                         }
                     });
                 }
-
-                modified.Performance = Math.trunc(modified.Performance);
-                modified.Quality = Math.trunc(modified.Quality);
-                modified.Efficiency = Math.trunc(modified.Efficiency);
 
                 internalStats.set(item.id, modified);
             }
@@ -171,17 +166,12 @@ export function useOptimizer() {
                 }
 
                 if (multiplier > 0) {
-                    p *= (1 + multiplier);
-                    q *= (1 + multiplier);
-                    e *= (1 + multiplier);
+                    p = Math.trunc(p * (1 + multiplier));
+                    q = Math.trunc(q * (1 + multiplier));
+                    e = Math.trunc(e * (1 + multiplier));
                 }
 
-                const finalStats = {
-                    Performance: Math.trunc(p),
-                    Quality: Math.trunc(q),
-                    Efficiency: Math.trunc(e)
-                };
-
+                const finalStats = { Performance: p, Quality: q, Efficiency: e };
                 pieceStats.set(item.id, finalStats);
                 totals.Performance += finalStats.Performance;
                 totals.Quality += finalStats.Quality;
@@ -195,15 +185,12 @@ export function useOptimizer() {
                 const adjacentItemData = placedPieces.get(adjId);
                 if (adjacentItemData) {
                     const baseAdj = getBaseStats(adjacentItemData.item);
-                    nodeStat.Performance += (baseAdj.Performance * 0.20);
-                    nodeStat.Quality += (baseAdj.Quality * 0.20);
-                    nodeStat.Efficiency += (baseAdj.Efficiency * 0.20);
+                    // Truncate exactly at the point of computation per neighbor module
+                    nodeStat.Performance += Math.trunc(baseAdj.Performance * 0.20);
+                    nodeStat.Quality += Math.trunc(baseAdj.Quality * 0.20);
+                    nodeStat.Efficiency += Math.trunc(baseAdj.Efficiency * 0.20);
                 }
             });
-
-            nodeStat.Performance = Math.trunc(nodeStat.Performance);
-            nodeStat.Quality = Math.trunc(nodeStat.Quality);
-            nodeStat.Efficiency = Math.trunc(nodeStat.Efficiency);
 
             pieceStats.set(nodeId, nodeStat);
             totals.Performance += nodeStat.Performance;
@@ -349,7 +336,7 @@ export function useOptimizer() {
                 if (validPlacements.length > 0) {
                     validPlacements.sort((a, b) => b.heuristicScore - a.heuristicScore);
                     const topN = Math.min(3, validPlacements.length);
-                    const picked = validPlacements[Math.floor(Math.random() * topN)]; // Used for array index
+                    const picked = validPlacements[Math.floor(Math.random() * topN)];
                     for (const pt of picked.offsets) {
                         currentBoard[picked.y + pt.y][picked.x + pt.x] = piece;
                     }

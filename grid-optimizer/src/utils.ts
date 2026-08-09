@@ -43,32 +43,49 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
     effects.forEach((effect, idx) => {
         const customVal = effectValues[idx];
 
-        if (effect === 'Premium') { p *= 1.2; q *= 1.2; e *= 1.2; }
-        else if (effect === 'Inferior') { p *= 0.8; q *= 0.8; e *= 0.8; }
-        else if (effect === 'Overcharged') { p *= 3.0; q *= 3.0; e *= 3.0; }
+        // Truncate before multiplier math
+        if (effect === 'Premium') {
+            p = Math.trunc(p * 1.2);
+            q = Math.trunc(q * 1.2);
+            e = Math.trunc(e * 1.2);
+        }
+        else if (effect === 'Inferior') {
+            p = Math.trunc(p * 0.8);
+            q = Math.trunc(q * 0.8);
+            e = Math.trunc(e * 0.8);
+        }
+        else if (effect === 'Overcharged') {
+            p = Math.trunc(p * 3.0);
+            q = Math.trunc(q * 3.0);
+            e = Math.trunc(e * 3.0);
+        }
         else if (effect === 'Degrading') {
             if (customVal !== undefined && !isNaN(customVal)) {
-                if (p > 0) p = customVal;
-                if (q > 0) q = customVal;
-                if (e > 0) e = customVal;
+                const truncVal = Math.trunc(customVal);
+                // Only positive stats change; negative stats remain at base values
+                if (p > 0) p = truncVal;
+                if (q > 0) q = truncVal;
+                if (e > 0) e = truncVal;
             }
         }
         else if (effect === 'Learning Algorithm') {
             if (customVal !== undefined && !isNaN(customVal)) {
-                if (p > 0) p = customVal;
-                else if (p < 0) p = Math.min(0, p + customVal);
+                const truncVal = Math.trunc(customVal);
+                if (p > 0) p = truncVal;
+                else if (p < 0) p = Math.min(0, p + truncVal);
 
-                if (q > 0) q = customVal;
-                else if (q < 0) q = Math.min(0, q + customVal);
+                if (q > 0) q = truncVal;
+                else if (q < 0) q = Math.min(0, q + truncVal);
 
-                if (e > 0) e = customVal;
-                else if (e < 0) e = Math.min(0, e + customVal);
+                if (e > 0) e = truncVal;
+                else if (e < 0) e = Math.min(0, e + truncVal);
             }
         }
         else if (effect === 'Negative Feedback') {
-            if (p > 0) p *= 1.25;
-            if (q > 0) q *= 1.25;
-            if (e > 0) e *= 1.25;
+            // Only applies +25% to positive base stats
+            if (p > 0) p = Math.trunc(p * 1.25);
+            if (q > 0) q = Math.trunc(q * 1.25);
+            if (e > 0) e = Math.trunc(e * 1.25);
         }
     });
 
