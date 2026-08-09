@@ -14,6 +14,7 @@ export interface InventoryItem {
     color: ModuleColor;
     displayName: string;
     effects: [ItemEffect, ItemEffect];
+    effectValues: [number, number];
 }
 
 export interface ModuleTemplate {

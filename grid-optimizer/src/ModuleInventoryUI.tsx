@@ -25,7 +25,8 @@ export default function ModuleInventoryUI() {
             shape: template.shape,
             color: template.color,
             displayName: template.displayName,
-            effects: ['None', 'None']
+            effects: ['None', 'None'],
+            effectValues: [0, 0]
         }]);
     };
 
@@ -34,7 +35,26 @@ export default function ModuleInventoryUI() {
             if (item.id === itemId) {
                 const updatedEffects: [ItemEffect, ItemEffect] = [...item.effects] as [ItemEffect, ItemEffect];
                 updatedEffects[effectIndex] = newEffect;
-                return { ...item, effects: updatedEffects };
+
+                const updatedValues: [number, number] = [...item.effectValues] as [number, number];
+                if (newEffect === 'Learning Algorithm') {
+                    updatedValues[effectIndex] = 200;
+                } else if (newEffect === 'Degrading') {
+                    updatedValues[effectIndex] = 0;
+                }
+
+                return { ...item, effects: updatedEffects, effectValues: updatedValues };
+            }
+            return item;
+        }));
+    };
+
+    const updateItemEffectValue = (itemId: string, effectIndex: 0 | 1, newValue: number) => {
+        setInventory(prev => prev.map(item => {
+            if (item.id === itemId) {
+                const updatedValues: [number, number] = [...item.effectValues] as [number, number];
+                updatedValues[effectIndex] = newValue;
+                return { ...item, effectValues: updatedValues };
             }
             return item;
         }));
@@ -150,7 +170,11 @@ export default function ModuleInventoryUI() {
                     </div>
                     {(hoverInfo.cell.effects[0] !== 'None' || hoverInfo.cell.effects[1] !== 'None') && (
                         <div style={{ fontSize: '0.75em', color: '#aaa', fontStyle: 'italic', marginBottom: '8px', borderBottom: '1px solid #333', paddingBottom: '5px' }}>
-                            {hoverInfo.cell.effects.filter(e => e !== 'None').map(e => `+ ${e}`).join('\n')}
+                            {hoverInfo.cell.effects.filter(e => e !== 'None').map((e) => {
+                                const actualIdx = hoverInfo.cell.effects.indexOf(e as ItemEffect);
+                                const val = hoverInfo.cell.effectValues[actualIdx];
+                                return `${e}${e === 'Learning Algorithm' || e === 'Degrading' ? ` (${val} uses)` : ''}`;
+                            }).join(', ')}
                         </div>
                     )}
                     {bestPieceStats.has(hoverInfo.cell.id) ? (
@@ -280,7 +304,7 @@ export default function ModuleInventoryUI() {
                 </div>
             </div>
 
-            {/* BOTTOM: Catalog & Inventory */}
+            {/* BOTTOM: Catalog */}
             <div style={{ display: 'flex', flex: '1', gap: '30px', minHeight: 0 }}>
 
                 {/* Catalog */}
@@ -296,9 +320,9 @@ export default function ModuleInventoryUI() {
                         </select>
                         <select value={filterSize} onChange={(e) => setFilterSize(e.target.value === 'All' ? 'All' : Number(e.target.value) as any)} style={{ padding: '8px 12px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', outline: 'none' }}>
                             <option value="All">All Sizes</option>
-                            <option value={3}>Area of 3</option>
-                            <option value={4}>Area of 4</option>
-                            <option value={5}>Area of 5</option>
+                            <option value={3}>Size 3</option>
+                            <option value={4}>Size 4</option>
+                            <option value={5}>Size 5</option>
                         </select>
                     </div>
 
@@ -340,7 +364,7 @@ export default function ModuleInventoryUI() {
                     </div>
                 </div>
 
-                {/* Right Panel: Inventory */}
+                {/* Right Panel: Selected Inventory */}
                 <div style={{ flex: '1', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' }}>
                         <span style={{ color: '#888', fontSize: '0.9em' }}>{inventory.length} Selected</span>
@@ -370,25 +394,39 @@ export default function ModuleInventoryUI() {
                                         <span style={{ fontSize: '0.9em', fontWeight: 'bold' }}>{item.displayName}</span>
 
                                         {item.shape !== 'Node1x2' && (
-                                            <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
-                                                <select
-                                                    value={item.effects[0]}
-                                                    onChange={(e) => updateItemEffect(item.id, 0, e.target.value as ItemEffect)}
-                                                    style={{ flex: 1, padding: '2px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px' }}
-                                                >
-                                                    {EFFECTS_LIST.filter(eff => eff === 'None' || eff !== item.effects[1]).map(eff => (
-                                                        <option key={eff} value={eff}>{eff === 'None' ? 'No Effect' : eff}</option>
-                                                    ))}
-                                                </select>
-                                                <select
-                                                    value={item.effects[1]}
-                                                    onChange={(e) => updateItemEffect(item.id, 1, e.target.value as ItemEffect)}
-                                                    style={{ flex: 1, padding: '2px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px' }}
-                                                >
-                                                    {EFFECTS_LIST.filter(eff => eff === 'None' || eff !== item.effects[0]).map(eff => (
-                                                        <option key={eff} value={eff}>{eff === 'None' ? 'No Effect' : eff}</option>
-                                                    ))}
-                                                </select>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '100%' }}>
+                                                {[0, 1].map((effectIdx) => {
+                                                    const currentEffect = item.effects[effectIdx];
+                                                    const showCustomInput = currentEffect === 'Learning Algorithm' || currentEffect === 'Degrading';
+
+                                                    return (
+                                                        <div key={effectIdx} style={{ display: 'flex', gap: '6px', alignItems: 'center', width: '100%' }}>
+                                                            <select
+                                                                value={currentEffect}
+                                                                onChange={(e) => updateItemEffect(item.id, effectIdx as 0 | 1, e.target.value as ItemEffect)}
+                                                                style={{ flex: 1, padding: '2px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px' }}
+                                                            >
+                                                                {EFFECTS_LIST.filter(eff => eff === 'None' || eff !== item.effects[effectIdx === 0 ? 1 : 0]).map(eff => (
+                                                                    <option key={eff} value={eff}>{eff === 'None' ? 'No Effect' : eff}</option>
+                                                                ))}
+                                                            </select>
+
+                                                            {showCustomInput && (
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }} title="Number of Uses">
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        max="200"
+                                                                        value={item.effectValues[effectIdx]}
+                                                                        onChange={(e) => updateItemEffectValue(item.id, effectIdx as 0 | 1, Number(e.target.value))}
+                                                                        style={{ width: '42px', padding: '1px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px', textAlign: 'center' }}
+                                                                    />
+                                                                    <span style={{ fontSize: '0.65em', color: '#aaa' }}>uses</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>

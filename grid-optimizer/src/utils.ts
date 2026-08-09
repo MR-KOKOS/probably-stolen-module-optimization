@@ -9,9 +9,9 @@ export const getBaseStats = (template: { shape: ModuleShape, color: ModuleColor,
 
     if (displayName.includes('Neural Core (Uncapped)')) return { Performance: 200, Quality: 100, Efficiency: -200 };
     if (displayName.includes('Neural Core (Capped)')) return { Performance: 100, Quality: 50, Efficiency: -100 };
-    if (displayName.includes('Alarm')) return { Performance: 0, Quality: 0, Efficiency: -50 };
+    if (displayName.includes('Alarm Module')) return { Performance: 0, Quality: 0, Efficiency: -50 };
     if (displayName.includes('Junk Processing')) return { Performance: 0, Quality: 0, Efficiency: 0 };
-    if (displayName.includes('Blast')) return { Performance: 0, Quality: 0, Efficiency: -100 };
+    if (displayName.includes('Blast Module')) return { Performance: 0, Quality: 0, Efficiency: -100 };
 
     const isL3 = shape === 'L3';
     const isBase4 = shape.includes('_Base');
@@ -37,21 +37,31 @@ export const getBaseStats = (template: { shape: ModuleShape, color: ModuleColor,
     return stats;
 };
 
-export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffect]): Stats => {
+export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffect], effectValues: [number, number] = [0, 0]): Stats => {
     let { Performance: p, Quality: q, Efficiency: e } = base;
 
-    for (const effect of effects) {
+    effects.forEach((effect, idx) => {
+        const val = effectValues[idx] ?? 0;
+
         if (effect === 'Premium') { p *= 1.2; q *= 1.2; e *= 1.2; }
         else if (effect === 'Inferior') { p *= 0.8; q *= 0.8; e *= 0.8; }
         else if (effect === 'Overcharged') { p *= 3.0; q *= 3.0; e *= 3.0; }
-        else if (effect === 'Degrading') { p *= 2.0; q *= 2.0; e *= 2.0; }
+        else if (effect === 'Degrading') {
+            const mult = Math.max(0, 2.0 - (val * 0.01));
+            if (p !== 0) p *= mult;
+            if (q !== 0) q *= mult;
+            if (e !== 0) e *= mult;
+        }
         else if (effect === 'Negative Feedback') { p *= 1.25; q *= 1.25; e *= 1.25; }
         else if (effect === 'Learning Algorithm') {
-            if (p > 0) p = 0;
-            if (q > 0) q = 0;
-            if (e > 0) e = 0;
+            const posMult = Math.min(2.0, val * 0.01);
+            const negFactor = Math.max(0, 1 - (val * 0.01));
+
+            if (p > 0) p *= posMult; else if (p < 0) p *= negFactor;
+            if (q > 0) q *= posMult; else if (q < 0) q *= negFactor;
+            if (e > 0) e *= posMult; else if (e < 0) e *= negFactor;
         }
-    }
+    });
 
     return { Performance: p, Quality: q, Efficiency: e };
 };
