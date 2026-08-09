@@ -144,6 +144,10 @@ export function useOptimizer() {
                     });
                 }
 
+                modified.Performance = Math.floor(modified.Performance);
+                modified.Quality = Math.floor(modified.Quality);
+                modified.Efficiency = Math.floor(modified.Efficiency);
+
                 internalStats.set(item.id, modified);
             }
         });
@@ -168,14 +172,20 @@ export function useOptimizer() {
                     e *= (1 + multiplier);
                 }
 
-                const finalStats = { Performance: p, Quality: q, Efficiency: e };
+                const finalStats = {
+                    Performance: Math.floor(p),
+                    Quality: Math.floor(q),
+                    Efficiency: Math.floor(e)
+                };
+
                 pieceStats.set(item.id, finalStats);
-                totals.Performance += p;
-                totals.Quality += q;
-                totals.Efficiency += e;
+                totals.Performance += finalStats.Performance;
+                totals.Quality += finalStats.Quality;
+                totals.Efficiency += finalStats.Efficiency;
             }
         });
 
+        // Nodes pull directly from the un-modified getBaseStats of their neighbors
         nodeAdjacencies.forEach((adjIds, nodeId) => {
             const nodeStat = { Performance: 0, Quality: 0, Efficiency: 0 };
             adjIds.forEach(adjId => {
@@ -187,6 +197,11 @@ export function useOptimizer() {
                     nodeStat.Efficiency += (baseAdj.Efficiency * 0.20);
                 }
             });
+
+            nodeStat.Performance = Math.floor(nodeStat.Performance);
+            nodeStat.Quality = Math.floor(nodeStat.Quality);
+            nodeStat.Efficiency = Math.floor(nodeStat.Efficiency);
+
             pieceStats.set(nodeId, nodeStat);
             totals.Performance += nodeStat.Performance;
             totals.Quality += nodeStat.Quality;
@@ -291,6 +306,7 @@ export function useOptimizer() {
             });
 
             const shapeSequence = optionalItems.map(i => i.shape).sort(() => Math.random() - 0.5);
+
             const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
 
             const shuffledInventory = [

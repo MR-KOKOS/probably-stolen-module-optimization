@@ -48,6 +48,7 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
         else if (effect === 'Overcharged') { p *= 3.0; q *= 3.0; e *= 3.0; }
         else if (effect === 'Degrading') {
             if (customVal !== undefined && !isNaN(customVal)) {
+                // Only positive stats change; negative stats remain at base values
                 if (p > 0) p = customVal;
                 if (q > 0) q = customVal;
                 if (e > 0) e = customVal;
@@ -55,6 +56,7 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
         }
         else if (effect === 'Learning Algorithm') {
             if (customVal !== undefined && !isNaN(customVal)) {
+                // Positive stats take the custom user value
                 if (p > 0) p = customVal;
                 else if (p < 0) p = Math.min(0, p + customVal);
 
@@ -73,11 +75,15 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
         }
     });
 
-    return { Performance: p, Quality: q, Efficiency: e };
+    return {
+        Performance: Math.floor(p),
+        Quality: Math.floor(q),
+        Efficiency: Math.floor(e)
+    };
 };
 
 export const formatStatValue = (val: number) => {
-    const rounded = Number(val.toFixed(1));
+    const rounded = Math.floor(val);
     return rounded > 0 ? `+${rounded}%` : `${rounded}%`;
 };
 
