@@ -145,6 +145,10 @@ export function useOptimizer() {
                     modified.Efficiency += (nfCount * 0.25 * nfEff);
                 }
 
+                modified.Performance = Math.trunc(modified.Performance);
+                modified.Quality = Math.trunc(modified.Quality);
+                modified.Efficiency = Math.trunc(modified.Efficiency);
+
                 internalStats.set(item.id, modified);
             }
         });
@@ -164,9 +168,9 @@ export function useOptimizer() {
                 }
 
                 if (multiplier > 0) {
-                    p *= (1 + multiplier);
-                    q *= (1 + multiplier);
-                    e *= (1 + multiplier);
+                    p = Math.trunc(p * (1 + multiplier));
+                    q = Math.trunc(q * (1 + multiplier));
+                    e = Math.trunc(e * (1 + multiplier));
                 }
 
                 const finalStats = {
@@ -213,7 +217,6 @@ export function useOptimizer() {
     useEffect(() => {
         if (!isSolvingRef.current) {
             let boardChanged = false;
-
             const newBoard = board.map(row => row.map(cell => {
                 if (cell && cell !== 'Locked') {
                     const invMatch = inventory.find(i => i.id === cell.id);
@@ -230,10 +233,7 @@ export function useOptimizer() {
 
             setBestTotals(totals);
             setBestPieceStats(new Map(pieceStats));
-
-            if (boardChanged) {
-                setBoard(newBoard);
-            }
+            if (boardChanged) setBoard(newBoard);
         }
     }, [inventory]);
 
@@ -248,35 +248,25 @@ export function useOptimizer() {
             return;
         }
 
+        let activeGoal = goal;
         const hasAnyPositiveStats = inventory.some(item => {
             const modified = applyInternalEffects(item);
             return Math.trunc(modified.Performance) > 0 || Math.trunc(modified.Quality) > 0 || Math.trunc(modified.Efficiency) > 0;
         });
 
-        let activeGoal = goal;
-
         if (!hasAnyPositiveStats) {
             setWarningMsg(`Selected modules have no stats. Optimizing for space/packing.`);
         } else {
-            const hasValidModules = inventory.some(item => {
-                const modified = applyInternalEffects(item);
-                return Math.trunc(modified[goal]) > 0;
-            });
-
+            const hasValidModules = inventory.some(item => Math.trunc(applyInternalEffects(item)[goal]) > 0);
             if (!hasValidModules) {
                 const redCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Performance) > 0).length;
                 const yellowCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Quality) > 0).length;
                 const greenCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Efficiency) > 0).length;
 
-                if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) {
-                    activeGoal = 'Performance';
-                } else if (yellowCount >= redCount && yellowCount >= greenCount && yellowCount > 0) {
-                    activeGoal = 'Quality';
-                } else if (greenCount >= redCount && greenCount >= yellowCount && greenCount > 0) {
-                    activeGoal = 'Efficiency';
-                } else {
-                    activeGoal = 'Performance';
-                }
+                if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) activeGoal = 'Performance';
+                else if (yellowCount >= redCount && yellowCount >= greenCount && yellowCount > 0) activeGoal = 'Quality';
+                else if (greenCount >= redCount && greenCount >= yellowCount && greenCount > 0) activeGoal = 'Efficiency';
+                else activeGoal = 'Performance';
 
                 setGoal(activeGoal);
                 setWarningMsg(`No modules provide ${goal}. Optimizing for majority type: ${activeGoal}`);
@@ -289,69 +279,186 @@ export function useOptimizer() {
         isSolvingRef.current = true;
 
         let localBestScore = -Infinity;
-        let bestBoardState = initializeBoard(tier);
+        let currentBoardState = initializeBoard(tier);
+
+        const precomputedBase = new Map<string, Stats>();
+        const precomputedInternal = new Map<string, Stats>();
+        inventory.forEach(item => {
+            precomputedBase.set(item.id, getEffectiveBaseStats(item));
+            precomputedInternal.set(item.id, applyInternalEffects(item));
+        });
+
+        const evaluatePlacementDelta = (piece: InventoryItem, x: number, y: number, offsets: Point[], testBoard: (InventoryItem | 'Locked' | null)[][], isBoardEmpty: boolean) => {
+            let isConnected = false;
+            let adjNodes = 0;
+            let negFeedbackBonus = 0;
+            let negativeContactCount = 0;
+            let nodeNodeContactCount = 0;
+
+            const base = precomputedBase.get(piece.id)!;
+            const internal = precomputedInternal.get(piece.id)!;
+            let p = internal.Performance;
+            let q = internal.Quality;
+            let e = internal.Efficiency;
+
+            const hasSideMount = piece.effects.includes('Side Mount');
+            const hasTopMount = piece.effects.includes('Top Mount');
+            const hasReceiver = piece.effects.includes('Receiver');
+            const nfCount = piece.effects.filter(eff => eff === 'Negative Feedback').length;
+            const isPureNegative = p <= 0 && q <= 0 && e <= 0 && (p < 0 || q < 0 || e < 0);
+
+            let multiplier = 0;
+            const pieceMinX = x + Math.min(...offsets.map(pt => pt.x));
+            const pieceMinY = y + Math.min(...offsets.map(pt => pt.y));
+
+            if (hasSideMount && pieceMinX === 0) multiplier += 0.20;
+            if (hasTopMount && pieceMinY === 0) multiplier += 0.20;
+
+            const neighborIds = new Set<string>();
+
+            for (const pt of offsets) {
+                const px = x + pt.x;
+                const py = y + pt.y;
+
+                if (px < 0 || px >= 7 || py < 0 || py >= 5 || testBoard[py][px] !== null) {
+                    return -Infinity;
+                }
+                if (px === 0 || px === 6 || py === 0 || py === 4) isConnected = true;
+
+                const neighbors = [ {nx: px, ny: py - 1}, {nx: px, ny: py + 1}, {nx: px - 1, ny: py}, {nx: px + 1, ny: py} ];
+                for (const {nx, ny} of neighbors) {
+                    if (nx >= 0 && nx < 7 && ny >= 0 && ny < 5) {
+                        const adjCell = testBoard[ny][nx];
+                        if (adjCell && adjCell !== 'Locked') {
+                            isConnected = true;
+                            neighborIds.add((adjCell as InventoryItem).id);
+
+                            if (piece.color === 'White') {
+                                if (adjCell.color !== 'White') {
+                                    const adjInt = precomputedInternal.get((adjCell as InventoryItem).id)!;
+                                    if (adjInt.Performance <= 0 && adjInt.Quality <= 0 && adjInt.Efficiency <= 0 && (adjInt.Performance < 0 || adjInt.Quality < 0 || adjInt.Efficiency < 0)) {
+                                        negativeContactCount++;
+                                    }
+                                } else {
+                                    nodeNodeContactCount++;
+                                }
+                            } else if (isPureNegative && adjCell.color === 'White') {
+                                negativeContactCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!isConnected && !isBoardEmpty) return -10000;
+
+            let nodeBonusScore = 0;
+
+            neighborIds.forEach(adjId => {
+                const adjPiece = inventory.find(i => i.id === adjId);
+                if (!adjPiece) return;
+
+                if (piece.color !== 'White' && adjPiece.color === 'White') {
+                    adjNodes++;
+                    nodeBonusScore += Math.trunc(base.Performance * 0.20) * (activeGoal === 'Performance' ? 1 : 0);
+                    nodeBonusScore += Math.trunc(base.Quality * 0.20) * (activeGoal === 'Quality' ? 1 : 0);
+                    nodeBonusScore += Math.trunc(base.Efficiency * 0.20) * (activeGoal === 'Efficiency' ? 1 : 0);
+                }
+
+                if (nfCount > 0 && adjPiece.color !== 'White') {
+                    const adjBase = precomputedBase.get(adjId)!;
+                    if (adjBase.Performance < 0) negFeedbackBonus += Math.trunc(nfCount * 0.25 * adjBase.Performance);
+                    if (adjBase.Quality < 0) negFeedbackBonus += Math.trunc(nfCount * 0.25 * adjBase.Quality);
+                    if (adjBase.Efficiency < 0) negFeedbackBonus += Math.trunc(nfCount * 0.25 * adjBase.Efficiency);
+                }
+            });
+
+            if (hasReceiver) multiplier += (0.10 * adjNodes);
+
+            if (multiplier > 0) {
+                p = Math.trunc(p * (1 + multiplier));
+                q = Math.trunc(q * (1 + multiplier));
+                e = Math.trunc(e * (1 + multiplier));
+            }
+
+            p += negFeedbackBonus;
+            q += negFeedbackBonus;
+            e += negFeedbackBonus;
+
+            const statScore = (activeGoal === 'Performance' ? p : activeGoal === 'Quality' ? q : e) + nodeBonusScore;
+            return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000) - (nodeNodeContactCount * 0.1);
+        };
 
         while (isSolvingRef.current) {
-            let currentBoard = initializeBoard(tier);
+            let testBoard = currentBoardState.map(row => [...row]);
+            let itemsToPlace: InventoryItem[] = [];
 
-            const mandatoryItems = inventory.filter(piece =>
-                piece.displayName.includes('Alarm Module') ||
-                piece.displayName.includes('Junk Processing') ||
-                piece.displayName.includes('Blast Module')
-            );
-            const optionalItems = inventory.filter(piece =>
-                !piece.displayName.includes('Alarm Module') &&
-                !piece.displayName.includes('Junk Processing') &&
-                !piece.displayName.includes('Blast Module')
-            );
+            const shouldMutate = localBestScore !== -Infinity && Math.random() > 0.2;
 
-            const getEffectiveStat = (item: InventoryItem) => {
-                return Math.trunc(applyInternalEffects(item)[activeGoal]);
-            };
+            if (shouldMutate) {
+                const placedIds = new Set<string>();
+                for (let y = 0; y < 5; y++) {
+                    for (let x = 0; x < 7; x++) {
+                        const cell = testBoard[y][x];
+                        if (cell && cell !== 'Locked') placedIds.add(cell.id);
+                    }
+                }
 
-            const optionalByShape = new Map<string, InventoryItem[]>();
-            optionalItems.forEach(item => {
-                if (!optionalByShape.has(item.shape)) optionalByShape.set(item.shape, []);
-                optionalByShape.get(item.shape)!.push(item);
-            });
+                const piecesToMutate: InventoryItem[] = [];
+                if (placedIds.size > 0) {
+                    const idsArr = Array.from(placedIds).sort(() => Math.random() - 0.5);
+                    const removeCount = Math.floor(Math.random() * Math.min(3, idsArr.length)) + 1;
+                    for (let i = 0; i < removeCount; i++) {
+                        const idToRemove = idsArr[i];
+                        for(let y=0; y<5; y++) {
+                            for(let x=0; x<7; x++) {
+                                const cell = testBoard[y][x];
+                                if (cell && cell !== 'Locked' && cell.id === idToRemove) testBoard[y][x] = null;
+                            }
+                        }
+                        const pItem = inventory.find(inv => inv.id === idToRemove);
+                        if (pItem) piecesToMutate.push(pItem);
+                    }
+                }
+                const unusedItems = inventory.filter(inv => !placedIds.has(inv.id));
+                itemsToPlace = [...piecesToMutate, ...unusedItems].sort(() => Math.random() - 0.5);
 
-            optionalByShape.forEach(list => {
-                list.sort((a, b) => getEffectiveStat(b) - getEffectiveStat(a));
-            });
+            } else {
+                testBoard = initializeBoard(tier);
+                const mandatoryItems = inventory.filter(p => p.displayName.includes('Alarm Module') || p.displayName.includes('Junk Processing') || p.displayName.includes('Blast Module'));
+                const optionalItems = inventory.filter(p => !p.displayName.includes('Alarm Module') && !p.displayName.includes('Junk Processing') && !p.displayName.includes('Blast Module'));
 
-            const shapeSequence = optionalItems.map(i => i.shape).sort(() => Math.random() - 0.5);
+                const optionalByShape = new Map<string, InventoryItem[]>();
+                optionalItems.forEach(item => {
+                    if (!optionalByShape.has(item.shape)) optionalByShape.set(item.shape, []);
+                    optionalByShape.get(item.shape)!.push(item);
+                });
+                optionalByShape.forEach(list => list.sort((a, b) => precomputedInternal.get(b.id)![activeGoal] - precomputedInternal.get(a.id)![activeGoal]));
 
-            const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
+                const shapeSequence = optionalItems.map(i => i.shape).sort(() => Math.random() - 0.5);
+                const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
 
-            const shuffledInventory = [
-                ...mandatoryItems.sort(() => Math.random() - 0.5),
-                ...shuffledOptional
-            ];
+                itemsToPlace = [...mandatoryItems.sort(() => Math.random() - 0.5), ...shuffledOptional];
+            }
 
-            for (const piece of shuffledInventory) {
+            let isBoardEmpty = true;
+            for (let y = 0; y < 5; y++) {
+                for (let x = 0; x < 7; x++) {
+                    if (testBoard[y][x] && testBoard[y][x] !== 'Locked') { isBoardEmpty = false; break; }
+                }
+                if (!isBoardEmpty) break;
+            }
+
+            for (const piece of itemsToPlace) {
                 const orientations = PRECOMPUTED_OFFSETS.get(piece.shape) || [];
                 const validPlacements: { x: number, y: number, offsets: Point[], score: number, heuristicScore: number }[] = [];
 
                 for (const offsets of orientations) {
                     for (let y = 0; y < 5; y++) {
                         for (let x = 0; x < 7; x++) {
-                            let fits = true;
-                            for (const pt of offsets) {
-                                const nx = x + pt.x; const ny = y + pt.y;
-                                if (nx < 0 || nx >= 7 || ny < 0 || ny >= 5 || currentBoard[ny][nx] !== null) {
-                                    fits = false; break;
-                                }
-                            }
-
-                            if (fits) {
-                                for (const pt of offsets) currentBoard[y + pt.y][x + pt.x] = piece;
-                                const stats = calculateBoardStats(currentBoard);
-
-                                let score = hasAnyPositiveStats ? stats.totals[activeGoal] : stats.placedPiecesCount;
-                                const heuristicScore = score + (stats.coveredNodeSides * 0.05) - (stats.negativeContactCount * 1000) - (stats.nodeNodeContactCount * 0.1);
-
-                                validPlacements.push({ x, y, offsets, score, heuristicScore });
-                                for (const pt of offsets) currentBoard[y + pt.y][x + pt.x] = null;
+                            const deltaScore = evaluatePlacementDelta(piece, x, y, offsets, testBoard, isBoardEmpty);
+                            if (deltaScore !== -Infinity) {
+                                validPlacements.push({ x, y, offsets, score: 0, heuristicScore: deltaScore });
                             }
                         }
                     }
@@ -362,22 +469,27 @@ export function useOptimizer() {
                     const topN = Math.min(3, validPlacements.length);
                     const picked = validPlacements[Math.floor(Math.random() * topN)];
                     for (const pt of picked.offsets) {
-                        currentBoard[picked.y + pt.y][picked.x + pt.x] = piece;
+                        testBoard[picked.y + pt.y][picked.x + pt.x] = piece;
                     }
+                    isBoardEmpty = false;
                 }
             }
 
-            const { totals, pieceStats, placedPiecesCount } = calculateBoardStats(currentBoard);
+            const { totals, pieceStats, placedPiecesCount } = calculateBoardStats(testBoard);
             const currentScore = hasAnyPositiveStats ? totals[activeGoal] : placedPiecesCount;
 
             if (!isSolvingRef.current) break;
 
+            // Remove flip-flopping by only updating board when a higher score is achieved
             if (currentScore > localBestScore) {
                 localBestScore = currentScore;
-                bestBoardState = JSON.parse(JSON.stringify(currentBoard));
+                currentBoardState = testBoard.map(row => [...row]);
                 setBestTotals(totals);
                 setBestPieceStats(new Map(pieceStats));
-                setBoard(bestBoardState);
+
+                setBoard(testBoard.map(row => [...row]));
+            } else if (currentScore === localBestScore && Math.random() > 0.5) {
+                currentBoardState = testBoard.map(row => [...row]);
             }
 
             await new Promise(resolve => setTimeout(resolve, 0));
