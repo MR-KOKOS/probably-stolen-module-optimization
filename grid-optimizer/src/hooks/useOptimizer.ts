@@ -51,6 +51,7 @@ export function useOptimizer() {
         const pieceStats = new Map<string, Stats>();
         let coveredNodeSides = 0;
         let negativeContactCount = 0;
+        let nodeNodeContactCount = 0;
         let placedPiecesCount = 0;
 
         const offsets = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
@@ -95,6 +96,9 @@ export function useOptimizer() {
                                         if (isPureNegative) {
                                             negativeContactCount++;
                                         }
+                                    } else if (adj.id !== cell.id) {
+                                        // Penalize Nodes touching other Nodes
+                                        nodeNodeContactCount++;
                                     }
                                 }
                             }
@@ -144,9 +148,9 @@ export function useOptimizer() {
                     });
                 }
 
-                modified.Performance = Math.floor(modified.Performance);
-                modified.Quality = Math.floor(modified.Quality);
-                modified.Efficiency = Math.floor(modified.Efficiency);
+                modified.Performance = Math.trunc(modified.Performance);
+                modified.Quality = Math.trunc(modified.Quality);
+                modified.Efficiency = Math.trunc(modified.Efficiency);
 
                 internalStats.set(item.id, modified);
             }
@@ -173,9 +177,9 @@ export function useOptimizer() {
                 }
 
                 const finalStats = {
-                    Performance: Math.floor(p),
-                    Quality: Math.floor(q),
-                    Efficiency: Math.floor(e)
+                    Performance: Math.trunc(p),
+                    Quality: Math.trunc(q),
+                    Efficiency: Math.trunc(e)
                 };
 
                 pieceStats.set(item.id, finalStats);
@@ -185,7 +189,6 @@ export function useOptimizer() {
             }
         });
 
-        // Nodes pull directly from the un-modified getBaseStats of their neighbors
         nodeAdjacencies.forEach((adjIds, nodeId) => {
             const nodeStat = { Performance: 0, Quality: 0, Efficiency: 0 };
             adjIds.forEach(adjId => {
@@ -198,9 +201,9 @@ export function useOptimizer() {
                 }
             });
 
-            nodeStat.Performance = Math.floor(nodeStat.Performance);
-            nodeStat.Quality = Math.floor(nodeStat.Quality);
-            nodeStat.Efficiency = Math.floor(nodeStat.Efficiency);
+            nodeStat.Performance = Math.trunc(nodeStat.Performance);
+            nodeStat.Quality = Math.trunc(nodeStat.Quality);
+            nodeStat.Efficiency = Math.trunc(nodeStat.Efficiency);
 
             pieceStats.set(nodeId, nodeStat);
             totals.Performance += nodeStat.Performance;
@@ -208,7 +211,7 @@ export function useOptimizer() {
             totals.Efficiency += nodeStat.Efficiency;
         });
 
-        return { totals, pieceStats, coveredNodeSides, negativeContactCount, placedPiecesCount };
+        return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount };
     };
 
     useEffect(() => {
@@ -334,7 +337,7 @@ export function useOptimizer() {
                                 const stats = calculateBoardStats(currentBoard);
 
                                 let score = hasAnyPositiveStats ? stats.totals[activeGoal] : stats.placedPiecesCount;
-                                const heuristicScore = score + (stats.coveredNodeSides * 0.05) - (stats.negativeContactCount * 1000);
+                                const heuristicScore = score + (stats.coveredNodeSides * 0.05) - (stats.negativeContactCount * 1000) - (stats.nodeNodeContactCount * 1000);
 
                                 validPlacements.push({ x, y, offsets, score, heuristicScore });
                                 for (const pt of offsets) currentBoard[y + pt.y][x + pt.x] = null;
@@ -346,7 +349,7 @@ export function useOptimizer() {
                 if (validPlacements.length > 0) {
                     validPlacements.sort((a, b) => b.heuristicScore - a.heuristicScore);
                     const topN = Math.min(3, validPlacements.length);
-                    const picked = validPlacements[Math.floor(Math.random() * topN)];
+                    const picked = validPlacements[Math.floor(Math.random() * topN)]; // Used for array index
                     for (const pt of picked.offsets) {
                         currentBoard[picked.y + pt.y][picked.x + pt.x] = piece;
                     }

@@ -48,7 +48,6 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
         else if (effect === 'Overcharged') { p *= 3.0; q *= 3.0; e *= 3.0; }
         else if (effect === 'Degrading') {
             if (customVal !== undefined && !isNaN(customVal)) {
-                // Only positive stats change; negative stats remain at base values
                 if (p > 0) p = customVal;
                 if (q > 0) q = customVal;
                 if (e > 0) e = customVal;
@@ -56,7 +55,6 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
         }
         else if (effect === 'Learning Algorithm') {
             if (customVal !== undefined && !isNaN(customVal)) {
-                // Positive stats take the custom user value
                 if (p > 0) p = customVal;
                 else if (p < 0) p = Math.min(0, p + customVal);
 
@@ -68,22 +66,22 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
             }
         }
         else if (effect === 'Negative Feedback') {
-            // Only applies +25% to positive base stats
             if (p > 0) p *= 1.25;
             if (q > 0) q *= 1.25;
             if (e > 0) e *= 1.25;
         }
     });
 
+    // Math.trunc rounds towards zero (+ values round down, - values round up)
     return {
-        Performance: Math.floor(p),
-        Quality: Math.floor(q),
-        Efficiency: Math.floor(e)
+        Performance: Math.trunc(p),
+        Quality: Math.trunc(q),
+        Efficiency: Math.trunc(e)
     };
 };
 
 export const formatStatValue = (val: number) => {
-    const rounded = Math.floor(val);
+    const rounded = Math.trunc(val);
     return rounded > 0 ? `+${rounded}%` : `${rounded}%`;
 };
 
@@ -91,7 +89,7 @@ export const getStatColor = (val: number) => {
     return val > 0 ? '#4caf50' : (val < 0 ? '#ff4d4d' : '#888');
 };
 
-// --- Geometry Pre-Processor ---
+// Geometry Pre-Processor
 const rotateMatrix = (m: number[][]) => m[0].map((_, idx) => m.map(row => row[idx]).reverse());
 const flipMatrix = (m: number[][]) => m.map(row => [...row].reverse());
 
