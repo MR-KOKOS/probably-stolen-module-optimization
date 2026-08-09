@@ -340,7 +340,7 @@ export function useOptimizer() {
                                 const stats = calculateBoardStats(currentBoard);
 
                                 let score = hasAnyPositiveStats ? stats.totals[activeGoal] : stats.placedPiecesCount;
-                                const heuristicScore = score + (stats.coveredNodeSides * 0.05) - (stats.negativeContactCount * 1000) - (stats.nodeNodeContactCount * 1000);
+                                const heuristicScore = score + (stats.coveredNodeSides * 0.05) - (stats.negativeContactCount * 1000) - (stats.nodeNodeContactCount * 0.1);
 
                                 validPlacements.push({ x, y, offsets, score, heuristicScore });
                                 for (const pt of offsets) currentBoard[y + pt.y][x + pt.x] = null;
