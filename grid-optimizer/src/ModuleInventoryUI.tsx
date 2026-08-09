@@ -19,9 +19,10 @@ export default function ModuleInventoryUI() {
     const [filterSize, setFilterSize] = useState<'All' | 3 | 4 | 5>('All');
     const [hoverInfo, setHoverInfo] = useState<{ x: number, y: number, cell: InventoryItem } | null>(null);
 
+    const hoveredItem = hoverInfo ? (inventory.find(i => i.id === hoverInfo.cell.id) || hoverInfo.cell) : null;
+
     const addPieceToInventory = (template: ModuleTemplate) => {
         const base = getBaseStats(template);
-        // Find the maximum positive stat value
         const maxPositiveBase = Math.max(
             base.Performance > 0 ? base.Performance : 0,
             base.Quality > 0 ? base.Quality : 0,
@@ -55,9 +56,9 @@ export default function ModuleInventoryUI() {
 
                 const updatedValues: [number, number] = [...invItem.effectValues] as [number, number];
                 if (newEffect === 'Learning Algorithm') {
-                    updatedValues[effectIndex] = defaultDoubleBase; // 2x positive base default
+                    updatedValues[effectIndex] = defaultDoubleBase;
                 } else if (newEffect === 'Degrading') {
-                    updatedValues[effectIndex] = maxPositiveBase; // Base positive stats default
+                    updatedValues[effectIndex] = maxPositiveBase;
                 }
 
                 return { ...invItem, effects: updatedEffects, effectValues: updatedValues };
@@ -154,8 +155,8 @@ export default function ModuleInventoryUI() {
     const filteredModules = MODULE_TEMPLATES.filter(m => {
         if (m.shapeType === 'Node') return false;
         if (filterGroup !== 'All' && m.group !== filterGroup) return false;
-        if (filterSize !== 'All' && m.size !== filterSize) return false;
-        return true;
+        return !(filterSize !== 'All' && m.size !== filterSize);
+
     });
 
     const shouldPushNodeToEnd = filterGroup !== 'All';
@@ -192,13 +193,13 @@ export default function ModuleInventoryUI() {
             </style>
 
             {/* Tooltip */}
-            {hoverInfo && (
+            {hoveredItem && hoverInfo && (
                 <div style={{
                     position: 'fixed',
                     top: hoverInfo.y + 15,
                     left: hoverInfo.x + 15,
                     backgroundColor: 'rgba(0, 0, 0, 0.95)',
-                    border: `1px solid ${COLOR_MAP[hoverInfo.cell.color]}`,
+                    border: `1px solid ${COLOR_MAP[hoveredItem.color]}`,
                     padding: '10px 15px',
                     borderRadius: '6px',
                     zIndex: 1000,
@@ -206,31 +207,31 @@ export default function ModuleInventoryUI() {
                     boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                     minWidth: '150px'
                 }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '4px', color: COLOR_MAP[hoverInfo.cell.color] }}>
-                        {hoverInfo.cell.displayName}
+                    <div style={{ fontWeight: 'bold', marginBottom: '4px', color: COLOR_MAP[hoveredItem.color] }}>
+                        {hoveredItem.displayName}
                     </div>
-                    {(hoverInfo.cell.effects[0] !== 'None' || hoverInfo.cell.effects[1] !== 'None') && (
+                    {(hoveredItem.effects[0] !== 'None' || hoveredItem.effects[1] !== 'None') && (
                         <div style={{ fontSize: '0.75em', color: '#aaa', fontStyle: 'italic', marginBottom: '8px', borderBottom: '1px solid #333', paddingBottom: '5px' }}>
-                            {hoverInfo.cell.effects.filter(e => e !== 'None').map((e) => {
-                                const actualIdx = hoverInfo.cell.effects.indexOf(e as ItemEffect);
-                                const val = hoverInfo.cell.effectValues[actualIdx];
+                            {hoveredItem.effects.filter(e => e !== 'None').map((e) => {
+                                const actualIdx = hoveredItem.effects.indexOf(e as ItemEffect);
+                                const val = hoveredItem.effectValues[actualIdx];
                                 return `${e}${e === 'Learning Algorithm' || e === 'Degrading' ? ` (${val}%)` : ''}`;
                             }).join(', ')}
                         </div>
                     )}
-                    {bestPieceStats.has(hoverInfo.cell.id) ? (
+                    {bestPieceStats.has(hoveredItem.id) ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.9em', marginTop: '5px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: '#aaa' }}>Perf:</span>
-                                <span style={{ color: getStatColor(bestPieceStats.get(hoverInfo.cell.id)!.Performance) }}>{formatStatValue(bestPieceStats.get(hoverInfo.cell.id)!.Performance)}</span>
+                                <span style={{ color: getStatColor(bestPieceStats.get(hoveredItem.id)!.Performance) }}>{formatStatValue(bestPieceStats.get(hoveredItem.id)!.Performance)}</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: '#aaa' }}>Qual:</span>
-                                <span style={{ color: getStatColor(bestPieceStats.get(hoverInfo.cell.id)!.Quality) }}>{formatStatValue(bestPieceStats.get(hoverInfo.cell.id)!.Quality)}</span>
+                                <span style={{ color: getStatColor(bestPieceStats.get(hoveredItem.id)!.Quality) }}>{formatStatValue(bestPieceStats.get(hoveredItem.id)!.Quality)}</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: '#aaa' }}>Effic:</span>
-                                <span style={{ color: getStatColor(bestPieceStats.get(hoverInfo.cell.id)!.Efficiency) }}>{formatStatValue(bestPieceStats.get(hoverInfo.cell.id)!.Efficiency)}</span>
+                                <span style={{ color: getStatColor(bestPieceStats.get(hoveredItem.id)!.Efficiency) }}>{formatStatValue(bestPieceStats.get(hoveredItem.id)!.Efficiency)}</span>
                             </div>
                         </div>
                     ) : (

@@ -1,4 +1,4 @@
-import type {ModuleShape, ModuleColor, Stats, ItemEffect, Point} from './types';
+import type {ModuleShape, ModuleColor, Stats, Point, InventoryItem} from './types';
 import { SHAPE_DEFINITIONS } from './constants';
 
 export const getBaseStats = (template: { shape: ModuleShape, color: ModuleColor, displayName: string }): Stats => {
@@ -37,32 +37,15 @@ export const getBaseStats = (template: { shape: ModuleShape, color: ModuleColor,
     return stats;
 };
 
-export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffect], effectValues: [number, number] = [0, 0]): Stats => {
-    let { Performance: p, Quality: q, Efficiency: e } = base;
+export const getEffectiveBaseStats = (item: InventoryItem): Stats => {
+    let { Performance: p, Quality: q, Efficiency: e } = getBaseStats(item);
 
-    effects.forEach((effect, idx) => {
-        const customVal = effectValues[idx];
+    item.effects.forEach((effect, idx) => {
+        const customVal = item.effectValues[idx];
 
-        // Truncate before multiplier math
-        if (effect === 'Premium') {
-            p = Math.trunc(p * 1.2);
-            q = Math.trunc(q * 1.2);
-            e = Math.trunc(e * 1.2);
-        }
-        else if (effect === 'Inferior') {
-            p = Math.trunc(p * 0.8);
-            q = Math.trunc(q * 0.8);
-            e = Math.trunc(e * 0.8);
-        }
-        else if (effect === 'Overcharged') {
-            p = Math.trunc(p * 3.0);
-            q = Math.trunc(q * 3.0);
-            e = Math.trunc(e * 3.0);
-        }
-        else if (effect === 'Degrading') {
+        if (effect === 'Degrading') {
             if (customVal !== undefined && !isNaN(customVal)) {
                 const truncVal = Math.trunc(customVal);
-                // Only positive stats change; negative stats remain at base values
                 if (p > 0) p = truncVal;
                 if (q > 0) q = truncVal;
                 if (e > 0) e = truncVal;
@@ -81,15 +64,37 @@ export const applyInternalEffects = (base: Stats, effects: [ItemEffect, ItemEffe
                 else if (e < 0) e = Math.min(0, e + truncVal);
             }
         }
+    });
+
+    return { Performance: p, Quality: q, Efficiency: e };
+};
+
+export const applyInternalEffects = (item: InventoryItem): Stats => {
+    let { Performance: p, Quality: q, Efficiency: e } = getEffectiveBaseStats(item);
+
+    item.effects.forEach((effect) => {
+        if (effect === 'Premium') {
+            p = Math.trunc(p * 1.2);
+            q = Math.trunc(q * 1.2);
+            e = Math.trunc(e * 1.2);
+        }
+        else if (effect === 'Inferior') {
+            p = Math.trunc(p * 0.8);
+            q = Math.trunc(q * 0.8);
+            e = Math.trunc(e * 0.8);
+        }
+        else if (effect === 'Overcharged') {
+            p = Math.trunc(p * 3.0);
+            q = Math.trunc(q * 3.0);
+            e = Math.trunc(e * 3.0);
+        }
         else if (effect === 'Negative Feedback') {
-            // Only applies +25% to positive base stats
             if (p > 0) p = Math.trunc(p * 1.25);
             if (q > 0) q = Math.trunc(q * 1.25);
             if (e > 0) e = Math.trunc(e * 1.25);
         }
     });
 
-    // Math.trunc rounds towards zero (+ values round down, - values round up)
     return {
         Performance: Math.trunc(p),
         Quality: Math.trunc(q),
