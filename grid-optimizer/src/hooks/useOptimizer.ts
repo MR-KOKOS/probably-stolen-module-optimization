@@ -110,7 +110,6 @@ export function useOptimizer() {
                 const base = getBaseStats(item);
                 let modified = applyInternalEffects(base, item.effects, item.effectValues);
 
-                // Negative Feedback: add 25% of negative base stats of adjacent modules
                 const nfCount = item.effects.filter(e => e === 'Negative Feedback').length;
                 if (nfCount > 0) {
                     const adjacentNeighborIds = new Set<string>();
@@ -180,10 +179,13 @@ export function useOptimizer() {
         nodeAdjacencies.forEach((adjIds, nodeId) => {
             const nodeStat = { Performance: 0, Quality: 0, Efficiency: 0 };
             adjIds.forEach(adjId => {
-                const finalAdj = pieceStats.get(adjId)!;
-                nodeStat.Performance += (finalAdj.Performance * 0.20);
-                nodeStat.Quality += (finalAdj.Quality * 0.20);
-                nodeStat.Efficiency += (finalAdj.Efficiency * 0.20);
+                const adjacentItemData = placedPieces.get(adjId);
+                if (adjacentItemData) {
+                    const baseAdj = getBaseStats(adjacentItemData.item);
+                    nodeStat.Performance += (baseAdj.Performance * 0.20);
+                    nodeStat.Quality += (baseAdj.Quality * 0.20);
+                    nodeStat.Efficiency += (baseAdj.Efficiency * 0.20);
+                }
             });
             pieceStats.set(nodeId, nodeStat);
             totals.Performance += nodeStat.Performance;
