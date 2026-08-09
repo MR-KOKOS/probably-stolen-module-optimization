@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type {Goal, GridTier, InventoryItem, FilterGroup, ItemEffect, ModuleTemplate, ModuleColor} from './types';
+import type { Stats, GridTier, InventoryItem, FilterGroup, ItemEffect, ModuleTemplate, ModuleColor } from './types';
 import { COLOR_MAP, EFFECTS_LIST, MODULE_TEMPLATES, NODE_TEMPLATE } from './constants';
 import { formatStatValue, getStatColor, getBaseStats } from './utils';
 import { useOptimizer } from './hooks/useOptimizer';
@@ -8,7 +8,9 @@ import MiniShape from './components/MiniShape';
 export default function ModuleInventoryUI() {
     const {
         tier, handleTierChange,
-        goal, setGoal, setWarningMsg,
+        targetStats, setTargetStats,
+        maximizeStats, setMaximizeStats,
+        setWarningMsg,
         inventory, setInventory,
         board, bestTotals, bestPieceStats,
         isSolving, warningMsg,
@@ -20,6 +22,16 @@ export default function ModuleInventoryUI() {
     const [hoverInfo, setHoverInfo] = useState<{ x: number, y: number, cell: InventoryItem } | null>(null);
 
     const hoveredItem = hoverInfo ? (inventory.find(i => i.id === hoverInfo.cell.id) || hoverInfo.cell) : null;
+
+    const handleMaximizeToggle = (stat: keyof Stats) => {
+        setMaximizeStats(prev => ({ ...prev, [stat]: !prev[stat] }));
+        setWarningMsg(null);
+    };
+
+    const handleTargetChange = (stat: keyof Stats, value: number) => {
+        setTargetStats(prev => ({ ...prev, [stat]: Math.max(0, value) }));
+        setWarningMsg(null);
+    };
 
     const addPieceToInventory = (template: ModuleTemplate) => {
         const base = getBaseStats(template);
@@ -241,7 +253,7 @@ export default function ModuleInventoryUI() {
             )}
 
             {/* TOP: Main Grid & Controls */}
-            <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ flex: '0 0 auto', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '20px' }}>
 
                 <div style={{ display: 'flex', gap: '40px', marginBottom: '15px', backgroundColor: '#1a1a1a', padding: '15px 30px', borderRadius: '8px', border: '1px solid #333' }}>
                     <div style={{ textAlign: 'center' }}>
@@ -299,13 +311,13 @@ export default function ModuleInventoryUI() {
 
                 <div style={{ minHeight: '22px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {warningMsg && (
-                        <span style={{ color: '#ff4d4d', fontSize: '0.8em' }}>
+                        <span style={{ color: '#ff4d4d', fontSize: '0.8em', textAlign: 'center' }}>
               ⚠ {warningMsg}
             </span>
                     )}
                 </div>
 
-                <div style={{ display: 'flex', gap: '15px', marginTop: '10px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '10px', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
                     <div style={{ display: 'flex', gap: '5px', backgroundColor: '#222', padding: '5px', borderRadius: '6px' }}>
                         {[1, 2, 3].map((t) => (
                             <button key={t} onClick={() => handleTierChange(t as GridTier)} disabled={isSolving} style={{ padding: '8px 16px', backgroundColor: tier === t ? '#555' : 'transparent', color: 'white', border: 'none', borderRadius: '4px', cursor: isSolving ? 'not-allowed' : 'pointer' }}>
@@ -314,17 +326,40 @@ export default function ModuleInventoryUI() {
                         ))}
                     </div>
 
-                    <select value={goal} onChange={(e) => { setGoal(e.target.value as Goal); setWarningMsg(null); }} disabled={isSolving} style={{ padding: '10px', backgroundColor: '#222', color: 'white', border: 'none', borderRadius: '6px', cursor: isSolving ? 'not-allowed' : 'pointer', outline: 'none' }}>
-                        <option value="Performance">Max Performance</option>
-                        <option value="Quality">Max Quality</option>
-                        <option value="Efficiency">Max Efficiency</option>
-                    </select>
+                    <div style={{ display: 'flex', gap: '10px', backgroundColor: '#222', padding: '8px 12px', borderRadius: '6px', border: '1px solid #333', justifyContent: 'center', alignItems: 'center' }}>
+                        {(['Performance', 'Quality', 'Efficiency'] as const).map((stat) => (
+                            <div key={stat} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', padding: '0 10px', borderRight: stat !== 'Efficiency' ? '1px solid #444' : 'none' }}>
+                                <span style={{ fontSize: '0.7em', color: '#aaa', textTransform: 'uppercase', fontWeight: 'bold', textAlign: 'center' }}>{stat}</span>
+                                <label style={{ fontSize: '0.75em', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={maximizeStats[stat]}
+                                        onChange={() => handleMaximizeToggle(stat)}
+                                        disabled={isSolving}
+                                        style={{ margin: 0, cursor: isSolving ? 'not-allowed' : 'pointer' }}
+                                    /> Maximize
+                                </label>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                    <span style={{ fontSize: '0.7em', color: '#888' }}>Target:</span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={targetStats[stat]}
+                                        onChange={(e) => handleTargetChange(stat, Number(e.target.value))}
+                                        disabled={isSolving}
+                                        style={{ width: '45px', padding: '2px', fontSize: '0.75em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px', textAlign: 'center' }}
+                                    />
+                                    <span style={{ fontSize: '0.7em', color: '#888' }}>%</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
 
                     <button
                         onClick={resetBoard}
                         style={{ padding: '10px 16px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '6px', cursor: 'pointer' }}
                     >
-                        Clear Board
+                        Clear
                     </button>
 
                     <button

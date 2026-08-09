@@ -1,12 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import type {GridTier, Goal, InventoryItem, Stats, Point} from '../types';
+import type {GridTier, InventoryItem, Stats, Point} from '../types';
 import { getEffectiveBaseStats, applyInternalEffects, PRECOMPUTED_OFFSETS } from '../utils';
 
 export function useOptimizer() {
     const [tier, setTier] = useState<GridTier>(3);
-    const [goal, setGoal] = useState<Goal>('Performance');
-    const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
+    // Complex Goals
+    const [targetStats, setTargetStats] = useState<Stats>({ Performance: 0, Quality: 0, Efficiency: 0 });
+    const [maximizeStats, setMaximizeStats] = useState({ Performance: false, Quality: false, Efficiency: false });
+
+    const [inventory, setInventory] = useState<InventoryItem[]>([]);
     const [board, setBoard] = useState<(InventoryItem | 'Locked' | null)[][]>(() => initializeBoard(3));
     const [bestTotals, setBestTotals] = useState<Stats>({ Performance: 0, Quality: 0, Efficiency: 0 });
     const [bestPieceStats, setBestPieceStats] = useState<Map<string, Stats>>(new Map());
@@ -44,6 +47,8 @@ export function useOptimizer() {
         setBestPieceStats(new Map());
         setInventory([]);
         setWarningMsg(null);
+        setTargetStats({ Performance: 0, Quality: 0, Efficiency: 0 });
+        setMaximizeStats({ Performance: false, Quality: false, Efficiency: false });
     };
 
     const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | null)[][]) => {
@@ -248,7 +253,9 @@ export function useOptimizer() {
             return;
         }
 
-        let activeGoal = goal;
+        let activeMax = { ...maximizeStats };
+        let activeTar = { ...targetStats };
+
         const hasAnyPositiveStats = inventory.some(item => {
             const modified = applyInternalEffects(item);
             return Math.trunc(modified.Performance) > 0 || Math.trunc(modified.Quality) > 0 || Math.trunc(modified.Efficiency) > 0;
@@ -257,23 +264,69 @@ export function useOptimizer() {
         if (!hasAnyPositiveStats) {
             setWarningMsg(`Selected modules have no stats. Optimizing for space/packing.`);
         } else {
-            const hasValidModules = inventory.some(item => Math.trunc(applyInternalEffects(item)[goal]) > 0);
-            if (!hasValidModules) {
+            // Check if current targets and max selections align with ANY modules in inventory
+            const validForCurrentGoals = inventory.some(item => {
+                const mod = applyInternalEffects(item);
+                return (activeMax.Performance && Math.trunc(mod.Performance) > 0) ||
+                    (activeMax.Quality && Math.trunc(mod.Quality) > 0) ||
+                    (activeMax.Efficiency && Math.trunc(mod.Efficiency) > 0) ||
+                    (activeTar.Performance > 0 && Math.trunc(mod.Performance) > 0) ||
+                    (activeTar.Quality > 0 && Math.trunc(mod.Quality) > 0) ||
+                    (activeTar.Efficiency > 0 && Math.trunc(mod.Efficiency) > 0);
+            });
+
+            if (!validForCurrentGoals) {
                 const redCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Performance) > 0).length;
                 const yellowCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Quality) > 0).length;
                 const greenCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Efficiency) > 0).length;
 
-                if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) activeGoal = 'Performance';
-                else if (yellowCount >= redCount && yellowCount >= greenCount && yellowCount > 0) activeGoal = 'Quality';
-                else if (greenCount >= redCount && greenCount >= yellowCount && greenCount > 0) activeGoal = 'Efficiency';
-                else activeGoal = 'Performance';
+                let autoGoal: keyof Stats = 'Performance';
+                if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) autoGoal = 'Performance';
+                else if (yellowCount >= redCount && yellowCount >= greenCount && yellowCount > 0) autoGoal = 'Quality';
+                else if (greenCount >= redCount && greenCount >= yellowCount && greenCount > 0) autoGoal = 'Efficiency';
 
-                setGoal(activeGoal);
-                setWarningMsg(`No modules provide ${goal}. Optimizing for majority type: ${activeGoal}`);
+                activeTar = { Performance: 0, Quality: 0, Efficiency: 0 };
+                activeMax = { Performance: false, Quality: false, Efficiency: false };
+                activeMax[autoGoal] = true;
+
+                setTargetStats(activeTar);
+                setMaximizeStats(activeMax);
+
+                const isAnyGoalSetInitially = maximizeStats.Performance || maximizeStats.Quality || maximizeStats.Efficiency || targetStats.Performance > 0 || targetStats.Quality > 0 || targetStats.Efficiency > 0;
+
+                if (!isAnyGoalSetInitially) {
+                    setWarningMsg(`No stat selected. Auto-maximizing majority type: ${autoGoal}`);
+                } else {
+                    setWarningMsg(`Selected modules do not provide targeted stats. Auto-maximizing majority type: ${autoGoal}`);
+                }
             } else {
                 setWarningMsg(null);
             }
         }
+
+        // Weight heuristic modifiers
+        let weightP = activeMax.Performance ? 1 : 0;
+        let weightQ = activeMax.Quality ? 1 : 0;
+        let weightE = activeMax.Efficiency ? 1 : 0;
+        if (activeTar.Performance > 0) weightP += 10;
+        if (activeTar.Quality > 0) weightQ += 10;
+        if (activeTar.Efficiency > 0) weightE += 10;
+
+        const calculateFitness = (t: Stats, piecesCount: number) => {
+            if (!hasAnyPositiveStats) return piecesCount;
+            let score = 0;
+
+            if (activeTar.Performance > 0 && t.Performance < activeTar.Performance) score -= (activeTar.Performance - t.Performance) * 10000;
+            if (activeTar.Quality > 0 && t.Quality < activeTar.Quality) score -= (activeTar.Quality - t.Quality) * 10000;
+            if (activeTar.Efficiency > 0 && t.Efficiency < activeTar.Efficiency) score -= (activeTar.Efficiency - t.Efficiency) * 10000;
+
+            // Normal scoring for maximizing stats
+            if (activeMax.Performance) score += t.Performance;
+            if (activeMax.Quality) score += t.Quality;
+            if (activeMax.Efficiency) score += t.Efficiency;
+
+            return score;
+        };
 
         setIsSolving(true);
         isSolvingRef.current = true;
@@ -360,9 +413,9 @@ export function useOptimizer() {
 
                 if (piece.color !== 'White' && adjPiece.color === 'White') {
                     adjNodes++;
-                    nodeBonusScore += Math.trunc(base.Performance * 0.20) * (activeGoal === 'Performance' ? 1 : 0);
-                    nodeBonusScore += Math.trunc(base.Quality * 0.20) * (activeGoal === 'Quality' ? 1 : 0);
-                    nodeBonusScore += Math.trunc(base.Efficiency * 0.20) * (activeGoal === 'Efficiency' ? 1 : 0);
+                    nodeBonusScore += Math.trunc(base.Performance * 0.20) * weightP;
+                    nodeBonusScore += Math.trunc(base.Quality * 0.20) * weightQ;
+                    nodeBonusScore += Math.trunc(base.Efficiency * 0.20) * weightE;
                 }
 
                 if (nfCount > 0 && adjPiece.color !== 'White') {
@@ -385,7 +438,7 @@ export function useOptimizer() {
             q += negFeedbackBonus;
             e += negFeedbackBonus;
 
-            const statScore = (activeGoal === 'Performance' ? p : activeGoal === 'Quality' ? q : e) + nodeBonusScore;
+            const statScore = (p * weightP) + (q * weightQ) + (e * weightE) + nodeBonusScore;
             return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000) - (nodeNodeContactCount * 0.1);
         };
 
@@ -428,12 +481,18 @@ export function useOptimizer() {
                 const mandatoryItems = inventory.filter(p => p.displayName.includes('Alarm Module') || p.displayName.includes('Junk Processing') || p.displayName.includes('Blast Module'));
                 const optionalItems = inventory.filter(p => !p.displayName.includes('Alarm Module') && !p.displayName.includes('Junk Processing') && !p.displayName.includes('Blast Module'));
 
+                const getEffectiveStat = (item: InventoryItem) => {
+                    const modified = applyInternalEffects(item);
+                    return (modified.Performance * weightP) + (modified.Quality * weightQ) + (modified.Efficiency * weightE);
+                };
+
                 const optionalByShape = new Map<string, InventoryItem[]>();
                 optionalItems.forEach(item => {
                     if (!optionalByShape.has(item.shape)) optionalByShape.set(item.shape, []);
                     optionalByShape.get(item.shape)!.push(item);
                 });
-                optionalByShape.forEach(list => list.sort((a, b) => precomputedInternal.get(b.id)![activeGoal] - precomputedInternal.get(a.id)![activeGoal]));
+
+                optionalByShape.forEach(list => list.sort((a, b) => getEffectiveStat(b) - getEffectiveStat(a)));
 
                 const shapeSequence = optionalItems.map(i => i.shape).sort(() => Math.random() - 0.5);
                 const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
@@ -476,17 +535,15 @@ export function useOptimizer() {
             }
 
             const { totals, pieceStats, placedPiecesCount } = calculateBoardStats(testBoard);
-            const currentScore = hasAnyPositiveStats ? totals[activeGoal] : placedPiecesCount;
+            const currentScore = calculateFitness(totals, placedPiecesCount);
 
             if (!isSolvingRef.current) break;
 
-            // Remove flip-flopping by only updating board when a higher score is achieved
             if (currentScore > localBestScore) {
                 localBestScore = currentScore;
                 currentBoardState = testBoard.map(row => [...row]);
                 setBestTotals(totals);
                 setBestPieceStats(new Map(pieceStats));
-
                 setBoard(testBoard.map(row => [...row]));
             } else if (currentScore === localBestScore && Math.random() > 0.5) {
                 currentBoardState = testBoard.map(row => [...row]);
@@ -500,7 +557,8 @@ export function useOptimizer() {
 
     return {
         tier, setTier, handleTierChange,
-        goal, setGoal,
+        targetStats, setTargetStats,
+        maximizeStats, setMaximizeStats,
         inventory, setInventory,
         board, bestTotals, bestPieceStats,
         isSolving, warningMsg, setWarningMsg,
