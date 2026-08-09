@@ -274,9 +274,28 @@ export function useOptimizer() {
                 !piece.displayName.includes('Blast Module')
             );
 
+            const getEffectiveStat = (item: InventoryItem) => {
+                const base = getBaseStats(item);
+                const modified = applyInternalEffects(base, item.effects, item.effectValues);
+                return modified[activeGoal];
+            };
+
+            const optionalByShape = new Map<string, InventoryItem[]>();
+            optionalItems.forEach(item => {
+                if (!optionalByShape.has(item.shape)) optionalByShape.set(item.shape, []);
+                optionalByShape.get(item.shape)!.push(item);
+            });
+
+            optionalByShape.forEach(list => {
+                list.sort((a, b) => getEffectiveStat(b) - getEffectiveStat(a));
+            });
+
+            const shapeSequence = optionalItems.map(i => i.shape).sort(() => Math.random() - 0.5);
+            const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
+
             const shuffledInventory = [
                 ...mandatoryItems.sort(() => Math.random() - 0.5),
-                ...optionalItems.sort(() => Math.random() - 0.5)
+                ...shuffledOptional
             ];
 
             for (const piece of shuffledInventory) {
