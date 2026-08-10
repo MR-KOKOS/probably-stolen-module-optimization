@@ -471,6 +471,7 @@ export function useOptimizer() {
         while (isSolvingRef.current) {
             let testBoard = currentBoardState.map(row => [...row]);
             let itemsToPlace: InventoryItem[] = [];
+            const mandatoryIds = new Set<string>();
 
             const isStagnant = stagnationCounter >= STAGNATION_LIMIT;
             const shouldMutate = localBestScore !== -Infinity && (isStagnant || Math.random() > 0.2);
@@ -526,26 +527,32 @@ export function useOptimizer() {
                 const mutationBlasts = rawItemsToPlace.filter(isBlast);
                 const mutationOthers = rawItemsToPlace.filter(p => !isAlarm(p) && !isJunk(p) && !isBlast(p));
 
-                const prioritized: InventoryItem[] = [...mutationAlarms];
-                const nonPrioritized: InventoryItem[] = [...mutationOthers];
+                const mandatoryThisRound: InventoryItem[] = [...mutationAlarms];
+                const fillerThisRound: InventoryItem[] = [];
 
                 if (!boardHasJunk && mutationJunks.length > 0) {
                     const shuffledJ = [...mutationJunks].sort(() => Math.random() - 0.5);
-                    prioritized.push(shuffledJ.shift()!);
-                    nonPrioritized.push(...shuffledJ);
+                    mandatoryThisRound.push(shuffledJ.shift()!);
+                    fillerThisRound.push(...shuffledJ);
                 } else {
-                    nonPrioritized.push(...mutationJunks);
+                    fillerThisRound.push(...mutationJunks);
                 }
 
                 if (!boardHasBlast && mutationBlasts.length > 0) {
                     const shuffledB = [...mutationBlasts].sort(() => Math.random() - 0.5);
-                    prioritized.push(shuffledB.shift()!);
-                    nonPrioritized.push(...shuffledB);
+                    mandatoryThisRound.push(shuffledB.shift()!);
+                    fillerThisRound.push(...shuffledB);
                 } else {
-                    nonPrioritized.push(...mutationBlasts);
+                    fillerThisRound.push(...mutationBlasts);
                 }
 
-                itemsToPlace = [...prioritized.sort(() => Math.random() - 0.5), ...nonPrioritized.sort(() => Math.random() - 0.5)];
+                mandatoryThisRound.forEach(p => mandatoryIds.add(p.id));
+
+                itemsToPlace = [
+                    ...mandatoryThisRound.sort(() => Math.random() - 0.5),
+                    ...mutationOthers.sort(() => Math.random() - 0.5),
+                    ...fillerThisRound.sort(() => Math.random() - 0.5)
+                ];
 
             } else {
                 testBoard = initializeBoard(tier);
@@ -556,18 +563,20 @@ export function useOptimizer() {
                 const others = inventory.filter(p => !isAlarm(p) && !isJunk(p) && !isBlast(p));
 
                 const mandatoryThisRound: InventoryItem[] = [...alarms];
-                const optionalThisRound: InventoryItem[] = [...others];
+                const fillerThisRound: InventoryItem[] = [];
 
                 if (junks.length > 0) {
                     const shuffledJ = [...junks].sort(() => Math.random() - 0.5);
                     mandatoryThisRound.push(shuffledJ.shift()!);
-                    optionalThisRound.push(...shuffledJ);
+                    fillerThisRound.push(...shuffledJ);
                 }
                 if (blasts.length > 0) {
                     const shuffledB = [...blasts].sort(() => Math.random() - 0.5);
                     mandatoryThisRound.push(shuffledB.shift()!);
-                    optionalThisRound.push(...shuffledB);
+                    fillerThisRound.push(...shuffledB);
                 }
+
+                mandatoryThisRound.forEach(p => mandatoryIds.add(p.id));
 
                 const getEffectiveStat = (item: InventoryItem) => {
                     const modified = applyInternalEffects(item);
@@ -575,17 +584,21 @@ export function useOptimizer() {
                 };
 
                 const optionalByShape = new Map<string, InventoryItem[]>();
-                optionalThisRound.forEach(item => {
+                others.forEach(item => {
                     if (!optionalByShape.has(item.shape)) optionalByShape.set(item.shape, []);
                     optionalByShape.get(item.shape)!.push(item);
                 });
 
                 optionalByShape.forEach(list => list.sort((a, b) => getEffectiveStat(b) - getEffectiveStat(a)));
 
-                const shapeSequence = optionalThisRound.map(i => i.shape).sort(() => Math.random() - 0.5);
+                const shapeSequence = others.map(i => i.shape).sort(() => Math.random() - 0.5);
                 const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
 
-                itemsToPlace = [...mandatoryThisRound.sort(() => Math.random() - 0.5), ...shuffledOptional];
+                itemsToPlace = [
+                    ...mandatoryThisRound.sort(() => Math.random() - 0.5),
+                    ...shuffledOptional,
+                    ...fillerThisRound.sort(() => Math.random() - 0.5)
+                ];
             }
 
             let isBoardEmpty = true;
@@ -597,6 +610,7 @@ export function useOptimizer() {
             }
 
             for (const piece of itemsToPlace) {
+                const isFiller = (isJunk(piece) || isBlast(piece)) && !mandatoryIds.has(piece.id);
                 const orientations = PRECOMPUTED_OFFSETS.get(piece.shape) || [];
                 const validPlacements: { x: number, y: number, offsets: Point[], score: number, heuristicScore: number }[] = [];
 
@@ -605,6 +619,8 @@ export function useOptimizer() {
                         for (let x = 0; x < 7; x++) {
                             const deltaScore = evaluatePlacementDelta(piece, x, y, offsets, testBoard, isBoardEmpty);
                             if (deltaScore !== -Infinity) {
+                                // Prevent extra junks/blasts from being placed if they lower the score
+                                if (isFiller && deltaScore < 0) continue;
                                 validPlacements.push({ x, y, offsets, score: 0, heuristicScore: deltaScore });
                             }
                         }
