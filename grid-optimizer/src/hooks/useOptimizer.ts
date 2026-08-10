@@ -59,7 +59,8 @@ export function useOptimizer() {
         let nodeNodeContactCount = 0;
         let placedPiecesCount = 0;
         let placedAlarmsCount = 0;
-        let placedJunkBlastCount = 0;
+        let placedJunkCount = 0;
+        let placedBlastCount = 0;
 
         const offsets = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
         const placedPieces = new Map<string, { item: InventoryItem, minX: number, minY: number }>();
@@ -116,7 +117,8 @@ export function useOptimizer() {
         const internalStats = new Map<string, Stats>();
         placedPieces.forEach(({ item }) => {
             if (item.displayName.includes('Alarm Module')) placedAlarmsCount++;
-            if (item.displayName.includes('Junk Processing') || item.displayName.includes('Blast Module')) placedJunkBlastCount++;
+            if (item.displayName.includes('Junk Processing')) placedJunkCount++;
+            if (item.displayName.includes('Blast Module')) placedBlastCount++;
 
             if (item.color !== 'White') {
                 let modified = applyInternalEffects(item);
@@ -221,7 +223,7 @@ export function useOptimizer() {
             totals.Efficiency += nodeStat.Efficiency;
         });
 
-        return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount, placedAlarmsCount, placedJunkBlastCount };
+        return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount };
     };
 
     useEffect(() => {
@@ -316,23 +318,27 @@ export function useOptimizer() {
         if (activeTar.Efficiency > 0) weightE += 10;
 
         const isAlarm = (p: InventoryItem) => p.displayName.includes('Alarm Module');
-        const isJunkBlast = (p: InventoryItem) => p.displayName.includes('Junk Processing') || p.displayName.includes('Blast Module');
+        const isJunk = (p: InventoryItem) => p.displayName.includes('Junk Processing');
+        const isBlast = (p: InventoryItem) => p.displayName.includes('Blast Module');
 
         const targetAlarmCount = inventory.filter(isAlarm).length;
-        const targetJunkBlastCount = inventory.some(isJunkBlast) ? 1 : 0;
+        const targetJunkCount = inventory.some(isJunk) ? 1 : 0;
+        const targetBlastCount = inventory.some(isBlast) ? 1 : 0;
 
-        const calculateFitness = (t: Stats, piecesCount: number, alarmsCount: number, junkBlastCount: number) => {
+        const calculateFitness = (t: Stats, piecesCount: number, alarmsCount: number, junkCount: number, blastCount: number) => {
             let score = 0;
 
             if (!hasAnyPositiveStats) {
                 score = piecesCount;
                 if (alarmsCount < targetAlarmCount) score -= (targetAlarmCount - alarmsCount) * 100000;
-                if (junkBlastCount < targetJunkBlastCount) score -= 100000;
+                if (junkCount < targetJunkCount) score -= 100000;
+                if (blastCount < targetBlastCount) score -= 100000;
                 return score;
             }
 
             if (alarmsCount < targetAlarmCount) score -= (targetAlarmCount - alarmsCount) * 100000;
-            if (junkBlastCount < targetJunkBlastCount) score -= 100000;
+            if (junkCount < targetJunkCount) score -= 100000;
+            if (blastCount < targetBlastCount) score -= 100000;
 
             if (activeTar.Performance > 0 && t.Performance < activeTar.Performance) score -= (activeTar.Performance - t.Performance) * 10000;
             if (activeTar.Quality > 0 && t.Quality < activeTar.Quality) score -= (activeTar.Quality - t.Quality) * 10000;
@@ -505,25 +511,38 @@ export function useOptimizer() {
                 const unusedItems = inventory.filter(inv => !placedIds.has(inv.id));
                 const rawItemsToPlace = [...piecesToMutate, ...unusedItems];
 
-                let boardHasJunkBlast = false;
+                let boardHasJunk = false;
+                let boardHasBlast = false;
                 placedIds.forEach(id => {
                     const p = inventory.find(i => i.id === id);
-                    if (p && isJunkBlast(p)) boardHasJunkBlast = true;
+                    if (p) {
+                        if (isJunk(p)) boardHasJunk = true;
+                        if (isBlast(p)) boardHasBlast = true;
+                    }
                 });
 
                 const mutationAlarms = rawItemsToPlace.filter(isAlarm);
-                const mutationJunkBlasts = rawItemsToPlace.filter(isJunkBlast);
-                const mutationOthers = rawItemsToPlace.filter(p => !isAlarm(p) && !isJunkBlast(p));
+                const mutationJunks = rawItemsToPlace.filter(isJunk);
+                const mutationBlasts = rawItemsToPlace.filter(isBlast);
+                const mutationOthers = rawItemsToPlace.filter(p => !isAlarm(p) && !isJunk(p) && !isBlast(p));
 
                 const prioritized: InventoryItem[] = [...mutationAlarms];
                 const nonPrioritized: InventoryItem[] = [...mutationOthers];
 
-                if (!boardHasJunkBlast && mutationJunkBlasts.length > 0) {
-                    const shuffledJB = [...mutationJunkBlasts].sort(() => Math.random() - 0.5);
-                    prioritized.push(shuffledJB.shift()!);
-                    nonPrioritized.push(...shuffledJB);
+                if (!boardHasJunk && mutationJunks.length > 0) {
+                    const shuffledJ = [...mutationJunks].sort(() => Math.random() - 0.5);
+                    prioritized.push(shuffledJ.shift()!);
+                    nonPrioritized.push(...shuffledJ);
                 } else {
-                    nonPrioritized.push(...mutationJunkBlasts);
+                    nonPrioritized.push(...mutationJunks);
+                }
+
+                if (!boardHasBlast && mutationBlasts.length > 0) {
+                    const shuffledB = [...mutationBlasts].sort(() => Math.random() - 0.5);
+                    prioritized.push(shuffledB.shift()!);
+                    nonPrioritized.push(...shuffledB);
+                } else {
+                    nonPrioritized.push(...mutationBlasts);
                 }
 
                 itemsToPlace = [...prioritized.sort(() => Math.random() - 0.5), ...nonPrioritized.sort(() => Math.random() - 0.5)];
@@ -532,16 +551,22 @@ export function useOptimizer() {
                 testBoard = initializeBoard(tier);
 
                 const alarms = inventory.filter(isAlarm);
-                const junkBlasts = inventory.filter(isJunkBlast);
-                const others = inventory.filter(p => !isAlarm(p) && !isJunkBlast(p));
+                const junks = inventory.filter(isJunk);
+                const blasts = inventory.filter(isBlast);
+                const others = inventory.filter(p => !isAlarm(p) && !isJunk(p) && !isBlast(p));
 
                 const mandatoryThisRound: InventoryItem[] = [...alarms];
                 const optionalThisRound: InventoryItem[] = [...others];
 
-                if (junkBlasts.length > 0) {
-                    const shuffledJB = [...junkBlasts].sort(() => Math.random() - 0.5);
-                    mandatoryThisRound.push(shuffledJB.shift()!);
-                    optionalThisRound.push(...shuffledJB);
+                if (junks.length > 0) {
+                    const shuffledJ = [...junks].sort(() => Math.random() - 0.5);
+                    mandatoryThisRound.push(shuffledJ.shift()!);
+                    optionalThisRound.push(...shuffledJ);
+                }
+                if (blasts.length > 0) {
+                    const shuffledB = [...blasts].sort(() => Math.random() - 0.5);
+                    mandatoryThisRound.push(shuffledB.shift()!);
+                    optionalThisRound.push(...shuffledB);
                 }
 
                 const getEffectiveStat = (item: InventoryItem) => {
@@ -597,8 +622,8 @@ export function useOptimizer() {
                 }
             }
 
-            const { totals, pieceStats, placedPiecesCount, placedAlarmsCount, placedJunkBlastCount } = calculateBoardStats(testBoard);
-            const currentScore = calculateFitness(totals, placedPiecesCount, placedAlarmsCount, placedJunkBlastCount);
+            const { totals, pieceStats, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount } = calculateBoardStats(testBoard);
+            const currentScore = calculateFitness(totals, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount);
 
             if (!isSolvingRef.current) break;
 
