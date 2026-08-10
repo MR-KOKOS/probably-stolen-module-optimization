@@ -84,9 +84,9 @@ export const applyInternalEffects = (item: InventoryItem): Stats => {
             e *= 0.8;
         }
         else if (effect === 'Overcharged') {
-            p *= 3.0;
-            q *= 3.0;
-            e *= 3.0;
+            p *= 2.0;
+            q *= 2.0;
+            e *= 2.0;
         }
         else if (effect === 'Negative Feedback') {
             if (p > 0) p *= 1.25;
