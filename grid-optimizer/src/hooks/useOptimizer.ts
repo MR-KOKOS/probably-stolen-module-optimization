@@ -442,6 +442,11 @@ export function useOptimizer() {
                     nodeBonusScore += Math.trunc(base.Performance * 0.20) * weightP;
                     nodeBonusScore += Math.trunc(base.Quality * 0.20) * weightQ;
                     nodeBonusScore += Math.trunc(base.Efficiency * 0.20) * weightE;
+                } else if (piece.color === 'White' && adjPiece.color !== 'White') {
+                    const adjBase = precomputedBase.get(adjId)!;
+                    nodeBonusScore += Math.trunc(adjBase.Performance * 0.20) * weightP;
+                    nodeBonusScore += Math.trunc(adjBase.Quality * 0.20) * weightQ;
+                    nodeBonusScore += Math.trunc(adjBase.Efficiency * 0.20) * weightE;
                 }
 
                 if (nfCount > 0 && adjPiece.color !== 'White') {
@@ -465,7 +470,7 @@ export function useOptimizer() {
             e += negFeedbackBonus;
 
             const statScore = (p * weightP) + (q * weightQ) + (e * weightE) + nodeBonusScore;
-            return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000) - (nodeNodeContactCount * 0.1);
+            return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000) - (nodeNodeContactCount * 0.001);
         };
 
         while (isSolvingRef.current) {
@@ -619,7 +624,6 @@ export function useOptimizer() {
                         for (let x = 0; x < 7; x++) {
                             const deltaScore = evaluatePlacementDelta(piece, x, y, offsets, testBoard, isBoardEmpty);
                             if (deltaScore !== -Infinity) {
-                                // Prevent extra junks/blasts from being placed if they lower the score
                                 if (isFiller && deltaScore < 0) continue;
                                 validPlacements.push({ x, y, offsets, score: 0, heuristicScore: deltaScore });
                             }
