@@ -58,6 +58,8 @@ export function useOptimizer() {
         let negativeContactCount = 0;
         let nodeNodeContactCount = 0;
         let placedPiecesCount = 0;
+        let placedAlarmsCount = 0;
+        let placedJunkBlastCount = 0;
 
         const offsets = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
         const placedPieces = new Map<string, { item: InventoryItem, minX: number, minY: number }>();
@@ -113,6 +115,9 @@ export function useOptimizer() {
 
         const internalStats = new Map<string, Stats>();
         placedPieces.forEach(({ item }) => {
+            if (item.displayName.includes('Alarm Module')) placedAlarmsCount++;
+            if (item.displayName.includes('Junk Processing') || item.displayName.includes('Blast Module')) placedJunkBlastCount++;
+
             if (item.color !== 'White') {
                 let modified = applyInternalEffects(item);
 
@@ -216,7 +221,7 @@ export function useOptimizer() {
             totals.Efficiency += nodeStat.Efficiency;
         });
 
-        return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount };
+        return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount, placedAlarmsCount, placedJunkBlastCount };
     };
 
     useEffect(() => {
@@ -264,7 +269,6 @@ export function useOptimizer() {
         if (!hasAnyPositiveStats) {
             setWarningMsg(`Selected modules have no stats. Optimizing for space/packing.`);
         } else {
-            // Check if current targets and max selections align with ANY modules in inventory
             const validForCurrentGoals = inventory.some(item => {
                 const mod = applyInternalEffects(item);
                 return (activeMax.Performance && Math.trunc(mod.Performance) > 0) ||
@@ -304,7 +308,6 @@ export function useOptimizer() {
             }
         }
 
-        // Weight heuristic modifiers
         let weightP = activeMax.Performance ? 1 : 0;
         let weightQ = activeMax.Quality ? 1 : 0;
         let weightE = activeMax.Efficiency ? 1 : 0;
@@ -312,15 +315,29 @@ export function useOptimizer() {
         if (activeTar.Quality > 0) weightQ += 10;
         if (activeTar.Efficiency > 0) weightE += 10;
 
-        const calculateFitness = (t: Stats, piecesCount: number) => {
-            if (!hasAnyPositiveStats) return piecesCount;
+        const isAlarm = (p: InventoryItem) => p.displayName.includes('Alarm Module');
+        const isJunkBlast = (p: InventoryItem) => p.displayName.includes('Junk Processing') || p.displayName.includes('Blast Module');
+
+        const targetAlarmCount = inventory.filter(isAlarm).length;
+        const targetJunkBlastCount = inventory.some(isJunkBlast) ? 1 : 0;
+
+        const calculateFitness = (t: Stats, piecesCount: number, alarmsCount: number, junkBlastCount: number) => {
             let score = 0;
+
+            if (!hasAnyPositiveStats) {
+                score = piecesCount;
+                if (alarmsCount < targetAlarmCount) score -= (targetAlarmCount - alarmsCount) * 100000;
+                if (junkBlastCount < targetJunkBlastCount) score -= 100000;
+                return score;
+            }
+
+            if (alarmsCount < targetAlarmCount) score -= (targetAlarmCount - alarmsCount) * 100000;
+            if (junkBlastCount < targetJunkBlastCount) score -= 100000;
 
             if (activeTar.Performance > 0 && t.Performance < activeTar.Performance) score -= (activeTar.Performance - t.Performance) * 10000;
             if (activeTar.Quality > 0 && t.Quality < activeTar.Quality) score -= (activeTar.Quality - t.Quality) * 10000;
             if (activeTar.Efficiency > 0 && t.Efficiency < activeTar.Efficiency) score -= (activeTar.Efficiency - t.Efficiency) * 10000;
 
-            // Normal scoring for maximizing stats
             if (activeMax.Performance) score += t.Performance;
             if (activeMax.Quality) score += t.Quality;
             if (activeMax.Efficiency) score += t.Efficiency;
@@ -333,6 +350,9 @@ export function useOptimizer() {
 
         let localBestScore = -Infinity;
         let currentBoardState = initializeBoard(tier);
+
+        let stagnationCounter = 0;
+        const STAGNATION_LIMIT = 75;
 
         const precomputedBase = new Map<string, Stats>();
         const precomputedInternal = new Map<string, Stats>();
@@ -446,7 +466,8 @@ export function useOptimizer() {
             let testBoard = currentBoardState.map(row => [...row]);
             let itemsToPlace: InventoryItem[] = [];
 
-            const shouldMutate = localBestScore !== -Infinity && Math.random() > 0.2;
+            const isStagnant = stagnationCounter >= STAGNATION_LIMIT;
+            const shouldMutate = localBestScore !== -Infinity && (isStagnant || Math.random() > 0.2);
 
             if (shouldMutate) {
                 const placedIds = new Set<string>();
@@ -460,7 +481,15 @@ export function useOptimizer() {
                 const piecesToMutate: InventoryItem[] = [];
                 if (placedIds.size > 0) {
                     const idsArr = Array.from(placedIds).sort(() => Math.random() - 0.5);
-                    const removeCount = Math.floor(Math.random() * Math.min(3, idsArr.length)) + 1;
+
+                    let removeCount;
+                    if (isStagnant) {
+                        removeCount = Math.max(1, Math.floor(idsArr.length * (0.5 + Math.random() * 0.4)));
+                        stagnationCounter = 0;
+                    } else {
+                        removeCount = Math.floor(Math.random() * Math.min(3, idsArr.length)) + 1;
+                    }
+
                     for (let i = 0; i < removeCount; i++) {
                         const idToRemove = idsArr[i];
                         for(let y=0; y<5; y++) {
@@ -474,12 +503,46 @@ export function useOptimizer() {
                     }
                 }
                 const unusedItems = inventory.filter(inv => !placedIds.has(inv.id));
-                itemsToPlace = [...piecesToMutate, ...unusedItems].sort(() => Math.random() - 0.5);
+                const rawItemsToPlace = [...piecesToMutate, ...unusedItems];
+
+                let boardHasJunkBlast = false;
+                placedIds.forEach(id => {
+                    const p = inventory.find(i => i.id === id);
+                    if (p && isJunkBlast(p)) boardHasJunkBlast = true;
+                });
+
+                const mutationAlarms = rawItemsToPlace.filter(isAlarm);
+                const mutationJunkBlasts = rawItemsToPlace.filter(isJunkBlast);
+                const mutationOthers = rawItemsToPlace.filter(p => !isAlarm(p) && !isJunkBlast(p));
+
+                const prioritized: InventoryItem[] = [...mutationAlarms];
+                const nonPrioritized: InventoryItem[] = [...mutationOthers];
+
+                if (!boardHasJunkBlast && mutationJunkBlasts.length > 0) {
+                    const shuffledJB = [...mutationJunkBlasts].sort(() => Math.random() - 0.5);
+                    prioritized.push(shuffledJB.shift()!);
+                    nonPrioritized.push(...shuffledJB);
+                } else {
+                    nonPrioritized.push(...mutationJunkBlasts);
+                }
+
+                itemsToPlace = [...prioritized.sort(() => Math.random() - 0.5), ...nonPrioritized.sort(() => Math.random() - 0.5)];
 
             } else {
                 testBoard = initializeBoard(tier);
-                const mandatoryItems = inventory.filter(p => p.displayName.includes('Alarm Module') || p.displayName.includes('Junk Processing') || p.displayName.includes('Blast Module'));
-                const optionalItems = inventory.filter(p => !p.displayName.includes('Alarm Module') && !p.displayName.includes('Junk Processing') && !p.displayName.includes('Blast Module'));
+
+                const alarms = inventory.filter(isAlarm);
+                const junkBlasts = inventory.filter(isJunkBlast);
+                const others = inventory.filter(p => !isAlarm(p) && !isJunkBlast(p));
+
+                const mandatoryThisRound: InventoryItem[] = [...alarms];
+                const optionalThisRound: InventoryItem[] = [...others];
+
+                if (junkBlasts.length > 0) {
+                    const shuffledJB = [...junkBlasts].sort(() => Math.random() - 0.5);
+                    mandatoryThisRound.push(shuffledJB.shift()!);
+                    optionalThisRound.push(...shuffledJB);
+                }
 
                 const getEffectiveStat = (item: InventoryItem) => {
                     const modified = applyInternalEffects(item);
@@ -487,17 +550,17 @@ export function useOptimizer() {
                 };
 
                 const optionalByShape = new Map<string, InventoryItem[]>();
-                optionalItems.forEach(item => {
+                optionalThisRound.forEach(item => {
                     if (!optionalByShape.has(item.shape)) optionalByShape.set(item.shape, []);
                     optionalByShape.get(item.shape)!.push(item);
                 });
 
                 optionalByShape.forEach(list => list.sort((a, b) => getEffectiveStat(b) - getEffectiveStat(a)));
 
-                const shapeSequence = optionalItems.map(i => i.shape).sort(() => Math.random() - 0.5);
+                const shapeSequence = optionalThisRound.map(i => i.shape).sort(() => Math.random() - 0.5);
                 const shuffledOptional = shapeSequence.map(shape => optionalByShape.get(shape)!.shift()!);
 
-                itemsToPlace = [...mandatoryItems.sort(() => Math.random() - 0.5), ...shuffledOptional];
+                itemsToPlace = [...mandatoryThisRound.sort(() => Math.random() - 0.5), ...shuffledOptional];
             }
 
             let isBoardEmpty = true;
@@ -534,8 +597,8 @@ export function useOptimizer() {
                 }
             }
 
-            const { totals, pieceStats, placedPiecesCount } = calculateBoardStats(testBoard);
-            const currentScore = calculateFitness(totals, placedPiecesCount);
+            const { totals, pieceStats, placedPiecesCount, placedAlarmsCount, placedJunkBlastCount } = calculateBoardStats(testBoard);
+            const currentScore = calculateFitness(totals, placedPiecesCount, placedAlarmsCount, placedJunkBlastCount);
 
             if (!isSolvingRef.current) break;
 
@@ -545,8 +608,12 @@ export function useOptimizer() {
                 setBestTotals(totals);
                 setBestPieceStats(new Map(pieceStats));
                 setBoard(testBoard.map(row => [...row]));
+                stagnationCounter = 0;
             } else if (currentScore === localBestScore && Math.random() > 0.5) {
                 currentBoardState = testBoard.map(row => [...row]);
+                stagnationCounter++;
+            } else {
+                stagnationCounter++;
             }
 
             await new Promise(resolve => setTimeout(resolve, 0));
