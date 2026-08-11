@@ -7,8 +7,7 @@ const SHAPE_MAP: ModuleShape[] = ['Node1x2', 'L3', 'L4_Base', 'T4_Base', 'Square
 const COLOR_MAP_KEYS: ModuleColor[] = ['White', 'Red', 'Yellow', 'Green', 'Purple', 'DarkRed', 'Grey'];
 const EFFECT_MAP: ItemEffect[] = ['None', 'Premium', 'Inferior', 'Overcharged', 'Degrading', 'Negative Feedback', 'Receiver', 'Side Mount', 'Top Mount', 'Learning Algorithm'];
 
-// Ascii85 alphabet
-const BASE85_ALPHABET = "!\"#$%&~()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu";
+const BASE85_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
 
 function encodeBase85(bytes: Uint8Array): string {
     let num = 1n;
@@ -24,6 +23,7 @@ function encodeBase85(bytes: Uint8Array): string {
 }
 
 function decodeBase85(str: string): Uint8Array {
+    str = str.trim();
     let num = 0n;
     for (let i = 0; i < str.length; i++) {
         const val = BASE85_ALPHABET.indexOf(str[i]);
