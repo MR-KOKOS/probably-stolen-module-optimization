@@ -14,6 +14,7 @@ export default function ModuleInventoryUI() {
         inventory, setInventory,
         board, bestTotals, bestPieceStats,
         isSolving, warningMsg,
+        solutionCode, setSolutionCode, importSolution,
         runOptimization, resetBoard
     } = useOptimizer();
 
@@ -28,8 +29,8 @@ export default function ModuleInventoryUI() {
         setWarningMsg(null);
     };
 
-    const handleTargetChange = (stat: keyof Stats, value: number) => {
-        setTargetStats(prev => ({ ...prev, [stat]: Math.max(0, value) }));
+    const handleTargetChange = (stat: keyof Stats, value: number | null) => {
+        setTargetStats(prev => ({ ...prev, [stat]: value }));
         setWarningMsg(null);
     };
 
@@ -343,9 +344,8 @@ export default function ModuleInventoryUI() {
                                     <span style={{ fontSize: '0.7em', color: '#888' }}>Target:</span>
                                     <input
                                         type="number"
-                                        min="0"
-                                        value={targetStats[stat]}
-                                        onChange={(e) => handleTargetChange(stat, Number(e.target.value))}
+                                        value={targetStats[stat] ?? ''}
+                                        onChange={(e) => handleTargetChange(stat, e.target.value === '' ? null : Number(e.target.value))}
                                         disabled={isSolving}
                                         style={{ width: '45px', padding: '2px', fontSize: '0.75em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px', textAlign: 'center' }}
                                     />
@@ -377,6 +377,33 @@ export default function ModuleInventoryUI() {
                         }}
                     >
                         {isSolving ? 'Stop Optimizer' : 'Run Optimizer'}
+                    </button>
+                </div>
+
+                {/* Solution Code UI */}
+                <div style={{ display: 'flex', width: '100%', marginTop: '15px', gap: '10px', justifyContent: 'center', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.8em', color: '#888' }}>Solution Code:</span>
+                    <input
+                        type="text"
+                        value={solutionCode}
+                        onChange={(e) => setSolutionCode(e.target.value)}
+                        placeholder="Paste an exported solution code here to import..."
+                        disabled={isSolving}
+                        style={{ flex: 1, maxWidth: '500px', padding: '8px', fontSize: '0.8em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '4px' }}
+                    />
+                    <button
+                        onClick={() => importSolution(solutionCode)}
+                        disabled={!solutionCode || isSolving}
+                        style={{ padding: '8px 16px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: (!solutionCode || isSolving) ? 'not-allowed' : 'pointer' }}
+                    >
+                        Import
+                    </button>
+                    <button
+                        onClick={() => navigator.clipboard.writeText(solutionCode)}
+                        disabled={!solutionCode}
+                        style={{ padding: '8px 16px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: !solutionCode ? 'not-allowed' : 'pointer' }}
+                    >
+                        Copy
                     </button>
                 </div>
             </div>
@@ -507,7 +534,20 @@ export default function ModuleInventoryUI() {
                                         )}
                                     </div>
                                 </div>
-                                <button onClick={() => setInventory(prev => prev.filter(i => i.id !== item.id))} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '1.2em', marginLeft: '10px' }}>&times;</button>
+                                <button
+                                    onClick={() => setInventory(prev => prev.filter(i => i.id !== item.id))}
+                                    disabled={isSolving}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: isSolving ? '#444' : '#666',
+                                        cursor: isSolving ? 'not-allowed' : 'pointer',
+                                        fontSize: '1.2em',
+                                        marginLeft: '10px'
+                                    }}
+                                >
+                                    &times;
+                                </button>
                             </div>
                         ))}
                     </div>

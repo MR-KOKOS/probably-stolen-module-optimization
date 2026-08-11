@@ -1,5 +1,4 @@
 export type GridTier = 1 | 2 | 3;
-export type Goal = 'Performance' | 'Quality' | 'Efficiency';
 export type ModuleColor = 'White' | 'Red' | 'Yellow' | 'Green' | 'Purple' | 'DarkRed' | 'Grey';
 export type ModuleShape =
     | 'Node1x2' | 'L3' | 'L4_Base' | 'T4_Base' | 'Square4_Base'
@@ -31,6 +30,12 @@ export interface Stats {
     Performance: number;
     Quality: number;
     Efficiency: number;
+}
+
+export interface TargetStats {
+    Performance: number | null;
+    Quality: number | null;
+    Efficiency: number | null;
 }
 
 export type Point = { x: number; y: number };

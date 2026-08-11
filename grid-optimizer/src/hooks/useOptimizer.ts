@@ -1,12 +1,100 @@
 import { useState, useRef, useEffect } from 'react';
-import type {GridTier, InventoryItem, Stats, Point} from '../types';
-import { getEffectiveBaseStats, applyInternalEffects, PRECOMPUTED_OFFSETS } from '../utils';
+import type {GridTier, InventoryItem, Stats, TargetStats, Point, ModuleShape, ModuleColor, ItemEffect} from '../types';
+import { getBaseStats, getEffectiveBaseStats, applyInternalEffects, PRECOMPUTED_OFFSETS } from '../utils';
+import { MODULE_TEMPLATES } from '../constants';
+
+const SHAPE_MAP: ModuleShape[] = ['Node1x2', 'L3', 'L4_Base', 'T4_Base', 'Square4_Base', 'L4_High', 'T4_High', 'Square4_High', 'P5', 'C5', 'Line4'];
+const COLOR_MAP_KEYS: ModuleColor[] = ['White', 'Red', 'Yellow', 'Green', 'Purple', 'DarkRed', 'Grey'];
+const EFFECT_MAP: ItemEffect[] = ['None', 'Premium', 'Inferior', 'Overcharged', 'Degrading', 'Negative Feedback', 'Receiver', 'Side Mount', 'Top Mount', 'Learning Algorithm'];
+
+// Ascii85 alphabet
+const BASE85_ALPHABET = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu";
+
+function encodeBase85(bytes: Uint8Array): string {
+    let num = 1n;
+    for (let i = 0; i < bytes.length; i++) {
+        num = (num << 8n) | BigInt(bytes[i]);
+    }
+    let str = "";
+    while (num > 0n) {
+        str = BASE85_ALPHABET[Number(num % 85n)] + str;
+        num /= 85n;
+    }
+    return str;
+}
+
+function decodeBase85(str: string): Uint8Array {
+    let num = 0n;
+    for (let i = 0; i < str.length; i++) {
+        const val = BASE85_ALPHABET.indexOf(str[i]);
+        if (val === -1) throw new Error("Invalid base85 character");
+        num = (num * 85n) + BigInt(val);
+    }
+    let hex = num.toString(16);
+    if (hex.length % 2 !== 0) hex = '0' + hex;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+    }
+    return bytes.slice(1);
+}
+
+class BitWriter {
+    bytes: number[] = [];
+    currentByte = 0;
+    bitPos = 0;
+
+    write(value: number, numBits: number) {
+        for (let i = numBits - 1; i >= 0; i--) {
+            const bit = (value >> i) & 1;
+            this.currentByte = (this.currentByte << 1) | bit;
+            this.bitPos++;
+            if (this.bitPos === 8) {
+                this.bytes.push(this.currentByte);
+                this.currentByte = 0;
+                this.bitPos = 0;
+            }
+        }
+    }
+
+    toBase85(): string {
+        if (this.bitPos > 0) {
+            this.bytes.push(this.currentByte << (8 - this.bitPos));
+        }
+        return encodeBase85(new Uint8Array(this.bytes));
+    }
+}
+
+class BitReader {
+    bytes: Uint8Array;
+    bytePos = 0;
+    bitPos = 7;
+
+    constructor(base85: string) {
+        this.bytes = decodeBase85(base85);
+    }
+
+    read(numBits: number): number {
+        let value = 0;
+        for (let i = 0; i < numBits; i++) {
+            if (this.bytePos >= this.bytes.length) throw new Error("EOF");
+            const bit = (this.bytes[this.bytePos] >> this.bitPos) & 1;
+            value = (value << 1) | bit;
+            this.bitPos--;
+            if (this.bitPos < 0) {
+                this.bitPos = 7;
+                this.bytePos++;
+            }
+        }
+        return value;
+    }
+}
 
 export function useOptimizer() {
     const [tier, setTier] = useState<GridTier>(3);
 
     // Complex Goals
-    const [targetStats, setTargetStats] = useState<Stats>({ Performance: 0, Quality: 0, Efficiency: 0 });
+    const [targetStats, setTargetStats] = useState<TargetStats>({ Performance: null, Quality: null, Efficiency: null });
     const [maximizeStats, setMaximizeStats] = useState({ Performance: false, Quality: false, Efficiency: false });
 
     const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -16,6 +104,7 @@ export function useOptimizer() {
 
     const [isSolving, setIsSolving] = useState(false);
     const [warningMsg, setWarningMsg] = useState<string | null>(null);
+    const [solutionCode, setSolutionCode] = useState<string>('');
     const isSolvingRef = useRef(false);
 
     function initializeBoard(currentTier: GridTier) {
@@ -35,6 +124,7 @@ export function useOptimizer() {
         setBestTotals({ Performance: 0, Quality: 0, Efficiency: 0 });
         setBestPieceStats(new Map());
         setWarningMsg(null);
+        setSolutionCode('');
     };
 
     const resetBoard = () => {
@@ -47,11 +137,12 @@ export function useOptimizer() {
         setBestPieceStats(new Map());
         setInventory([]);
         setWarningMsg(null);
-        setTargetStats({ Performance: 0, Quality: 0, Efficiency: 0 });
+        setTargetStats({ Performance: null, Quality: null, Efficiency: null });
         setMaximizeStats({ Performance: false, Quality: false, Efficiency: false });
+        setSolutionCode('');
     };
 
-    const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | null)[][]) => {
+    const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | null)[][], currentInventory: InventoryItem[] = inventory) => {
         const totals: Stats = { Performance: 0, Quality: 0, Efficiency: 0 };
         const pieceStats = new Map<string, Stats>();
         let coveredNodeSides = 0;
@@ -71,7 +162,7 @@ export function useOptimizer() {
             for (let x = 0; x < 7; x++) {
                 const boardCell = currentBoard[y][x];
                 if (boardCell && boardCell !== 'Locked') {
-                    const cell = inventory.find(i => i.id === boardCell.id) || boardCell;
+                    const cell = currentInventory.find(i => i.id === boardCell.id) || boardCell;
                     gridItemMap.set(`${x},${y}`, cell);
 
                     if (!placedPieces.has(cell.id)) {
@@ -90,7 +181,7 @@ export function useOptimizer() {
                             if (nx >= 0 && nx < 7 && ny >= 0 && ny < 5) {
                                 const adjBoardCell = currentBoard[ny][nx];
                                 if (adjBoardCell && adjBoardCell !== 'Locked') {
-                                    const adj = inventory.find(i => i.id === adjBoardCell.id) || adjBoardCell;
+                                    const adj = currentInventory.find(i => i.id === adjBoardCell.id) || adjBoardCell;
                                     if (adj.color !== 'White') {
                                         nodeAdjacencies.get(cell.id)!.add(adj.id);
                                         coveredNodeSides++;
@@ -226,6 +317,111 @@ export function useOptimizer() {
         return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount };
     };
 
+    const importSolution = (code: string) => {
+        try {
+            const reader = new BitReader(code);
+
+            const decodedTier = reader.read(2) as GridTier;
+            setTier(decodedTier);
+
+            const maxP = reader.read(1) === 1;
+            const maxQ = reader.read(1) === 1;
+            const maxE = reader.read(1) === 1;
+            setMaximizeStats({ Performance: maxP, Quality: maxQ, Efficiency: maxE });
+
+            const readTarget = () => {
+                const hasTarget = reader.read(1) === 1;
+                if (!hasTarget) return null;
+                return reader.read(12) - 2048;
+            };
+
+            setTargetStats({
+                Performance: readTarget(),
+                Quality: readTarget(),
+                Efficiency: readTarget()
+            });
+
+            const newInventory: InventoryItem[] = [];
+            const newBoard: (InventoryItem | 'Locked' | null)[][] = Array.from({ length: 5 }, () => Array.from({ length: 7 }, () => null));
+
+            if (decodedTier === 1 || decodedTier === 2) {
+                newBoard[0][0] = newBoard[0][6] = newBoard[4][0] = newBoard[4][6] = 'Locked';
+            }
+            if (decodedTier === 1) {
+                newBoard[1][3] = newBoard[2][2] = newBoard[2][3] = newBoard[2][4] = newBoard[3][3] = 'Locked';
+            }
+
+            const numModules = reader.read(8);
+
+            for (let i = 0; i < numModules; i++) {
+                const shapeIdx = reader.read(4);
+                const colorIdx = reader.read(3);
+                const shape = SHAPE_MAP[shapeIdx];
+                const color = COLOR_MAP_KEYS[colorIdx];
+
+                const posCount = reader.read(3);
+                const positions: number[] = [];
+                for (let p = 0; p < posCount; p++) {
+                    positions.push(reader.read(6));
+                }
+
+                const template = shape === 'Node1x2'
+                    ? { displayName: 'Node' }
+                    : MODULE_TEMPLATES.find(m => m.shape === shape && m.color === color) || { displayName: 'Unknown Module' };
+
+                const reconstructedEffects: [ItemEffect, ItemEffect] = ['None', 'None'];
+                const base = getBaseStats({ shape, color, displayName: template.displayName } as any);
+                const maxPositiveBase = Math.max(base.Performance, base.Quality, base.Efficiency, 0);
+                const defaultDoubleBase = maxPositiveBase * 2;
+                const reconstructedValues: [number, number] = [defaultDoubleBase, defaultDoubleBase];
+
+                for (let eIdx = 0; eIdx < 2; eIdx++) {
+                    const hasEffect = reader.read(1) === 1;
+                    if (hasEffect) {
+                        const effIdx = reader.read(4);
+                        const eff = EFFECT_MAP[effIdx];
+                        reconstructedEffects[eIdx] = eff;
+
+                        if (eff === 'Learning Algorithm' || eff === 'Degrading') {
+                            const hasValue = reader.read(1) === 1;
+                            if (hasValue) {
+                                reconstructedValues[eIdx] = reader.read(12) - 2048;
+                            }
+                        }
+                    }
+                }
+
+                const newItem: InventoryItem = {
+                    id: `${shape}_${color}_${Math.random().toString(36).substring(2, 8)}`,
+                    shape,
+                    color,
+                    displayName: template.displayName,
+                    effects: reconstructedEffects,
+                    effectValues: reconstructedValues
+                };
+                newInventory.push(newItem);
+
+                positions.forEach((pos: number) => {
+                    const y = Math.floor(pos / 7);
+                    const x = pos % 7;
+                    newBoard[y][x] = newItem;
+                });
+            }
+
+            setInventory(newInventory);
+            setBoard(newBoard);
+            setSolutionCode(code);
+            setWarningMsg(null);
+
+            const { totals, pieceStats } = calculateBoardStats(newBoard, newInventory);
+            setBestTotals(totals);
+            setBestPieceStats(new Map(pieceStats));
+
+        } catch (e) {
+            setWarningMsg("Failed to import solution code.");
+        }
+    };
+
     useEffect(() => {
         if (!isSolvingRef.current) {
             let boardChanged = false;
@@ -247,7 +443,7 @@ export function useOptimizer() {
             setBestPieceStats(new Map(pieceStats));
             if (boardChanged) setBoard(newBoard);
         }
-    }, [inventory]);
+    }, [inventory, board]);
 
     const runOptimization = async () => {
         if (isSolving) {
@@ -260,6 +456,7 @@ export function useOptimizer() {
             return;
         }
 
+        setSolutionCode('');
         let activeMax = { ...maximizeStats };
         let activeTar = { ...targetStats };
 
@@ -276,9 +473,9 @@ export function useOptimizer() {
                 return (activeMax.Performance && Math.trunc(mod.Performance) > 0) ||
                     (activeMax.Quality && Math.trunc(mod.Quality) > 0) ||
                     (activeMax.Efficiency && Math.trunc(mod.Efficiency) > 0) ||
-                    (activeTar.Performance > 0 && Math.trunc(mod.Performance) > 0) ||
-                    (activeTar.Quality > 0 && Math.trunc(mod.Quality) > 0) ||
-                    (activeTar.Efficiency > 0 && Math.trunc(mod.Efficiency) > 0);
+                    (activeTar.Performance !== null && Math.trunc(mod.Performance) !== 0) ||
+                    (activeTar.Quality !== null && Math.trunc(mod.Quality) !== 0) ||
+                    (activeTar.Efficiency !== null && Math.trunc(mod.Efficiency) !== 0);
             });
 
             if (!validForCurrentGoals) {
@@ -291,14 +488,14 @@ export function useOptimizer() {
                 else if (yellowCount >= redCount && yellowCount >= greenCount && yellowCount > 0) autoGoal = 'Quality';
                 else if (greenCount >= redCount && greenCount >= yellowCount && greenCount > 0) autoGoal = 'Efficiency';
 
-                activeTar = { Performance: 0, Quality: 0, Efficiency: 0 };
+                activeTar = { Performance: null, Quality: null, Efficiency: null };
                 activeMax = { Performance: false, Quality: false, Efficiency: false };
                 activeMax[autoGoal] = true;
 
                 setTargetStats(activeTar);
                 setMaximizeStats(activeMax);
 
-                const isAnyGoalSetInitially = maximizeStats.Performance || maximizeStats.Quality || maximizeStats.Efficiency || targetStats.Performance > 0 || targetStats.Quality > 0 || targetStats.Efficiency > 0;
+                const isAnyGoalSetInitially = maximizeStats.Performance || maximizeStats.Quality || maximizeStats.Efficiency || targetStats.Performance !== null || targetStats.Quality !== null || targetStats.Efficiency !== null;
 
                 if (!isAnyGoalSetInitially) {
                     setWarningMsg(`No stat selected. Auto-maximizing majority type: ${autoGoal}`);
@@ -310,12 +507,12 @@ export function useOptimizer() {
             }
         }
 
-        let weightP = activeMax.Performance ? 1 : 0;
-        let weightQ = activeMax.Quality ? 1 : 0;
-        let weightE = activeMax.Efficiency ? 1 : 0;
-        if (activeTar.Performance > 0) weightP += 10;
-        if (activeTar.Quality > 0) weightQ += 10;
-        if (activeTar.Efficiency > 0) weightE += 10;
+        let weightP = activeMax.Performance ? 10 : 0.1;
+        let weightQ = activeMax.Quality ? 10 : 0.1;
+        let weightE = activeMax.Efficiency ? 10 : 0.1;
+        if (activeTar.Performance !== null) weightP += 15;
+        if (activeTar.Quality !== null) weightQ += 15;
+        if (activeTar.Efficiency !== null) weightE += 15;
 
         const isAlarm = (p: InventoryItem) => p.displayName.includes('Alarm Module');
         const isJunk = (p: InventoryItem) => p.displayName.includes('Junk Processing');
@@ -340,13 +537,13 @@ export function useOptimizer() {
             if (junkCount < targetJunkCount) score -= 100000;
             if (blastCount < targetBlastCount) score -= 100000;
 
-            if (activeTar.Performance > 0 && t.Performance < activeTar.Performance) score -= (activeTar.Performance - t.Performance) * 10000;
-            if (activeTar.Quality > 0 && t.Quality < activeTar.Quality) score -= (activeTar.Quality - t.Quality) * 10000;
-            if (activeTar.Efficiency > 0 && t.Efficiency < activeTar.Efficiency) score -= (activeTar.Efficiency - t.Efficiency) * 10000;
+            if (activeTar.Performance !== null && t.Performance < activeTar.Performance) score -= (activeTar.Performance - t.Performance) * 10000;
+            if (activeTar.Quality !== null && t.Quality < activeTar.Quality) score -= (activeTar.Quality - t.Quality) * 10000;
+            if (activeTar.Efficiency !== null && t.Efficiency < activeTar.Efficiency) score -= (activeTar.Efficiency - t.Efficiency) * 10000;
 
-            if (activeMax.Performance) score += t.Performance;
-            if (activeMax.Quality) score += t.Quality;
-            if (activeMax.Efficiency) score += t.Efficiency;
+            if (activeMax.Performance) score += (t.Performance * 10);
+            if (activeMax.Quality) score += (t.Quality * 10);
+            if (activeMax.Efficiency) score += (t.Efficiency * 10);
 
             return score;
         };
@@ -665,6 +862,65 @@ export function useOptimizer() {
         }
 
         setIsSolving(false);
+
+        const writer = new BitWriter();
+
+        writer.write(tier, 2);
+
+        writer.write(activeMax.Performance ? 1 : 0, 1);
+        writer.write(activeMax.Quality ? 1 : 0, 1);
+        writer.write(activeMax.Efficiency ? 1 : 0, 1);
+
+        const writeTarget = (val: number | null) => {
+            if (val === null) {
+                writer.write(0, 1);
+            } else {
+                writer.write(1, 1);
+                writer.write(val + 2048, 12);
+            }
+        };
+        writeTarget(activeTar.Performance);
+        writeTarget(activeTar.Quality);
+        writeTarget(activeTar.Efficiency);
+
+        writer.write(inventory.length, 8);
+
+        const placedItemsMap = new Map<string, number[]>();
+        currentBoardState.forEach((row, y) => row.forEach((cell, x) => {
+            if (cell && cell !== 'Locked') {
+                if (!placedItemsMap.has(cell.id)) {
+                    placedItemsMap.set(cell.id, []);
+                }
+                placedItemsMap.get(cell.id)!.push(y * 7 + x);
+            }
+        }));
+
+        inventory.forEach(item => {
+            writer.write(SHAPE_MAP.indexOf(item.shape), 4);
+            writer.write(COLOR_MAP_KEYS.indexOf(item.color), 3);
+
+            const positions = placedItemsMap.get(item.id) || [];
+            writer.write(positions.length, 3);
+            positions.forEach(p => writer.write(p, 6));
+
+            item.effects.forEach((eff, idx) => {
+                if (eff === 'None') {
+                    writer.write(0, 1);
+                } else {
+                    writer.write(1, 1);
+                    writer.write(EFFECT_MAP.indexOf(eff), 4);
+
+                    if (eff === 'Learning Algorithm' || eff === 'Degrading') {
+                        writer.write(1, 1);
+                        writer.write(item.effectValues[idx] + 2048, 12);
+                    } else {
+                        writer.write(0, 1);
+                    }
+                }
+            });
+        });
+
+        setSolutionCode(writer.toBase85());
     };
 
     return {
@@ -674,6 +930,7 @@ export function useOptimizer() {
         inventory, setInventory,
         board, bestTotals, bestPieceStats,
         isSolving, warningMsg, setWarningMsg,
+        solutionCode, setSolutionCode, importSolution,
         runOptimization, resetBoard
     };
 }
