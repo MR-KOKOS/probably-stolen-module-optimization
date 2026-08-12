@@ -390,8 +390,9 @@ export function useOptimizer() {
                         const eff = EFFECT_MAP[effIdx];
                         reconstructedEffects[eIdx] = eff;
 
+                        const hasValue = reader.read(1) === 1;
+
                         if (eff === 'Learning Algorithm' || eff === 'Degrading') {
-                            const hasValue = reader.read(1) === 1;
                             if (hasValue) {
                                 reconstructedValues[eIdx] = reader.read(12) - 2048;
                             }
@@ -426,7 +427,7 @@ export function useOptimizer() {
             setBestPieceStats(new Map(pieceStats));
 
         } catch (e) {
-            setWarningMsg("Failed to import solution code. The code might be broken or from an incompatible version.");
+            setWarningMsg("Failed to import solution code.");
         }
     };
 
