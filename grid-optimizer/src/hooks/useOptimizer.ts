@@ -1,7 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import type {GridTier, InventoryItem, Stats, TargetStats, Point, ModuleShape, ModuleColor, ItemEffect} from '../types';
 import { getBaseStats, getEffectiveBaseStats, applyInternalEffects, PRECOMPUTED_OFFSETS } from '../utils';
 import { MODULE_TEMPLATES } from '../constants';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://yhiojdutwgfxrgakbrjs.supabase.co';
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InloaW9qZHV0d2dmeHJnYWticmpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODcwMjMsImV4cCI6MjEwMjA2MzAyM30.lVkU06tLfM64aFYL2Gx-UMPFL9KCRSaadu58TDWMmSI';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 const SHAPE_MAP: ModuleShape[] = ['Node1x2', 'L3', 'L4_Base', 'T4_Base', 'Square4_Base', 'L4_High', 'T4_High', 'Square4_High', 'P5', 'C5', 'Line4'];
 const COLOR_MAP_KEYS: ModuleColor[] = ['White', 'Red', 'Yellow', 'Green', 'Purple', 'DarkRed', 'Grey'];
@@ -90,10 +95,11 @@ class BitReader {
     }
 }
 
+const roundStat = (val: number) => val < 0 ? Math.ceil(val) : Math.floor(val);
+
 export function useOptimizer() {
     const [tier, setTier] = useState<GridTier>(3);
 
-    // Complex Goals
     const [targetStats, setTargetStats] = useState<TargetStats>({ Performance: null, Quality: null, Efficiency: null });
     const [maximizeStats, setMaximizeStats] = useState({ Performance: false, Quality: false, Efficiency: false });
 
@@ -147,7 +153,6 @@ export function useOptimizer() {
         const pieceStats = new Map<string, Stats>();
         let coveredNodeSides = 0;
         let negativeContactCount = 0;
-        let nodeNodeContactCount = 0;
         let placedPiecesCount = 0;
         let placedAlarmsCount = 0;
         let placedJunkCount = 0;
@@ -188,14 +193,12 @@ export function useOptimizer() {
 
                                         const adjModified = applyInternalEffects(adj);
                                         const isPureNegative =
-                                            (Math.trunc(adjModified.Performance) <= 0 && Math.trunc(adjModified.Quality) <= 0 && Math.trunc(adjModified.Efficiency) <= 0) &&
-                                            (Math.trunc(adjModified.Performance) < 0 || Math.trunc(adjModified.Quality) < 0 || Math.trunc(adjModified.Efficiency) < 0);
+                                            (roundStat(adjModified.Performance) <= 0 && roundStat(adjModified.Quality) <= 0 && roundStat(adjModified.Efficiency) <= 0) &&
+                                            (roundStat(adjModified.Performance) < 0 || roundStat(adjModified.Quality) < 0 || roundStat(adjModified.Efficiency) < 0);
 
                                         if (isPureNegative) {
                                             negativeContactCount++;
                                         }
-                                    } else if (adj.id !== cell.id) {
-                                        nodeNodeContactCount++;
                                     }
                                 }
                             }
@@ -248,9 +251,9 @@ export function useOptimizer() {
                     modified.Efficiency += (nfCount * 0.25 * nfEff);
                 }
 
-                modified.Performance = Math.trunc(modified.Performance);
-                modified.Quality = Math.trunc(modified.Quality);
-                modified.Efficiency = Math.trunc(modified.Efficiency);
+                modified.Performance = roundStat(modified.Performance);
+                modified.Quality = roundStat(modified.Quality);
+                modified.Efficiency = roundStat(modified.Efficiency);
 
                 internalStats.set(item.id, modified);
             }
@@ -271,15 +274,15 @@ export function useOptimizer() {
                 }
 
                 if (multiplier > 0) {
-                    p = Math.trunc(p * (1 + multiplier));
-                    q = Math.trunc(q * (1 + multiplier));
-                    e = Math.trunc(e * (1 + multiplier));
+                    p = roundStat(p * (1 + multiplier));
+                    q = roundStat(q * (1 + multiplier));
+                    e = roundStat(e * (1 + multiplier));
                 }
 
                 const finalStats = {
-                    Performance: Math.trunc(p),
-                    Quality: Math.trunc(q),
-                    Efficiency: Math.trunc(e)
+                    Performance: roundStat(p),
+                    Quality: roundStat(q),
+                    Efficiency: roundStat(e)
                 };
 
                 pieceStats.set(item.id, finalStats);
@@ -303,9 +306,9 @@ export function useOptimizer() {
             });
 
             const nodeStat = {
-                Performance: Math.trunc(nodeP * 0.20),
-                Quality: Math.trunc(nodeQ * 0.20),
-                Efficiency: Math.trunc(nodeE * 0.20)
+                Performance: roundStat(nodeP * 0.20),
+                Quality: roundStat(nodeQ * 0.20),
+                Efficiency: roundStat(nodeE * 0.20)
             };
 
             pieceStats.set(nodeId, nodeStat);
@@ -314,7 +317,7 @@ export function useOptimizer() {
             totals.Efficiency += nodeStat.Efficiency;
         });
 
-        return { totals, pieceStats, coveredNodeSides, negativeContactCount, nodeNodeContactCount, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount };
+        return { totals, pieceStats, coveredNodeSides, negativeContactCount, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount };
     };
 
     const importSolution = (code: string) => {
@@ -371,8 +374,13 @@ export function useOptimizer() {
 
                 const reconstructedEffects: [ItemEffect, ItemEffect] = ['None', 'None'];
                 const base = getBaseStats({ shape, color, displayName: template.displayName } as any);
-                const maxPositiveBase = Math.max(base.Performance, base.Quality, base.Efficiency, 0);
-                const defaultDoubleBase = maxPositiveBase * 2;
+
+                const maxBaseValue = Math.max(
+                    Math.abs(base.Performance),
+                    Math.abs(base.Quality),
+                    Math.abs(base.Efficiency)
+                );
+                const defaultDoubleBase = maxBaseValue * 2;
                 const reconstructedValues: [number, number] = [defaultDoubleBase, defaultDoubleBase];
 
                 for (let eIdx = 0; eIdx < 2; eIdx++) {
@@ -418,7 +426,7 @@ export function useOptimizer() {
             setBestPieceStats(new Map(pieceStats));
 
         } catch (e) {
-            setWarningMsg("Failed to import solution code.");
+            setWarningMsg("Failed to import solution code. The code might be broken or from an incompatible version.");
         }
     };
 
@@ -462,7 +470,7 @@ export function useOptimizer() {
 
         const hasAnyPositiveStats = inventory.some(item => {
             const modified = applyInternalEffects(item);
-            return Math.trunc(modified.Performance) > 0 || Math.trunc(modified.Quality) > 0 || Math.trunc(modified.Efficiency) > 0;
+            return roundStat(modified.Performance) > 0 || roundStat(modified.Quality) > 0 || roundStat(modified.Efficiency) > 0;
         });
 
         if (!hasAnyPositiveStats) {
@@ -470,18 +478,18 @@ export function useOptimizer() {
         } else {
             const validForCurrentGoals = inventory.some(item => {
                 const mod = applyInternalEffects(item);
-                return (activeMax.Performance && Math.trunc(mod.Performance) > 0) ||
-                    (activeMax.Quality && Math.trunc(mod.Quality) > 0) ||
-                    (activeMax.Efficiency && Math.trunc(mod.Efficiency) > 0) ||
-                    (activeTar.Performance !== null && Math.trunc(mod.Performance) !== 0) ||
-                    (activeTar.Quality !== null && Math.trunc(mod.Quality) !== 0) ||
-                    (activeTar.Efficiency !== null && Math.trunc(mod.Efficiency) !== 0);
+                return (activeMax.Performance && roundStat(mod.Performance) > 0) ||
+                    (activeMax.Quality && roundStat(mod.Quality) > 0) ||
+                    (activeMax.Efficiency && roundStat(mod.Efficiency) > 0) ||
+                    (activeTar.Performance !== null && roundStat(mod.Performance) !== 0) ||
+                    (activeTar.Quality !== null && roundStat(mod.Quality) !== 0) ||
+                    (activeTar.Efficiency !== null && roundStat(mod.Efficiency) !== 0);
             });
 
             if (!validForCurrentGoals) {
-                const redCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Performance) > 0).length;
-                const yellowCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Quality) > 0).length;
-                const greenCount = inventory.filter(i => Math.trunc(applyInternalEffects(i).Efficiency) > 0).length;
+                const redCount = inventory.filter(i => roundStat(applyInternalEffects(i).Performance) > 0).length;
+                const yellowCount = inventory.filter(i => roundStat(applyInternalEffects(i).Quality) > 0).length;
+                const greenCount = inventory.filter(i => roundStat(applyInternalEffects(i).Efficiency) > 0).length;
 
                 let autoGoal: keyof Stats = 'Performance';
                 if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) autoGoal = 'Performance';
@@ -553,6 +561,7 @@ export function useOptimizer() {
 
         let localBestScore = -Infinity;
         let currentBoardState = initializeBoard(tier);
+        let localBestTotals = { Performance: 0, Quality: 0, Efficiency: 0 };
 
         let stagnationCounter = 0;
         const STAGNATION_LIMIT = 75;
@@ -569,7 +578,6 @@ export function useOptimizer() {
             let adjNodes = 0;
             let negFeedbackBonus = 0;
             let negativeContactCount = 0;
-            let nodeNodeContactCount = 0;
 
             const base = precomputedBase.get(piece.id)!;
             const internal = precomputedInternal.get(piece.id)!;
@@ -615,8 +623,6 @@ export function useOptimizer() {
                                     if (adjInt.Performance <= 0 && adjInt.Quality <= 0 && adjInt.Efficiency <= 0 && (adjInt.Performance < 0 || adjInt.Quality < 0 || adjInt.Efficiency < 0)) {
                                         negativeContactCount++;
                                     }
-                                } else {
-                                    nodeNodeContactCount++;
                                 }
                             } else if (isPureNegative && adjCell.color === 'White') {
                                 negativeContactCount++;
@@ -636,30 +642,30 @@ export function useOptimizer() {
 
                 if (piece.color !== 'White' && adjPiece.color === 'White') {
                     adjNodes++;
-                    nodeBonusScore += Math.trunc(base.Performance * 0.20) * weightP;
-                    nodeBonusScore += Math.trunc(base.Quality * 0.20) * weightQ;
-                    nodeBonusScore += Math.trunc(base.Efficiency * 0.20) * weightE;
+                    nodeBonusScore += roundStat(base.Performance * 0.20) * weightP;
+                    nodeBonusScore += roundStat(base.Quality * 0.20) * weightQ;
+                    nodeBonusScore += roundStat(base.Efficiency * 0.20) * weightE;
                 } else if (piece.color === 'White' && adjPiece.color !== 'White') {
                     const adjBase = precomputedBase.get(adjId)!;
-                    nodeBonusScore += Math.trunc(adjBase.Performance * 0.20) * weightP;
-                    nodeBonusScore += Math.trunc(adjBase.Quality * 0.20) * weightQ;
-                    nodeBonusScore += Math.trunc(adjBase.Efficiency * 0.20) * weightE;
+                    nodeBonusScore += roundStat(adjBase.Performance * 0.20) * weightP;
+                    nodeBonusScore += roundStat(adjBase.Quality * 0.20) * weightQ;
+                    nodeBonusScore += roundStat(adjBase.Efficiency * 0.20) * weightE;
                 }
 
                 if (nfCount > 0 && adjPiece.color !== 'White') {
                     const adjBase = precomputedBase.get(adjId)!;
-                    if (adjBase.Performance < 0) negFeedbackBonus += Math.trunc(nfCount * 0.25 * adjBase.Performance);
-                    if (adjBase.Quality < 0) negFeedbackBonus += Math.trunc(nfCount * 0.25 * adjBase.Quality);
-                    if (adjBase.Efficiency < 0) negFeedbackBonus += Math.trunc(nfCount * 0.25 * adjBase.Efficiency);
+                    if (adjBase.Performance < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjBase.Performance);
+                    if (adjBase.Quality < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjBase.Quality);
+                    if (adjBase.Efficiency < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjBase.Efficiency);
                 }
             });
 
             if (hasReceiver) multiplier += (0.10 * adjNodes);
 
             if (multiplier > 0) {
-                p = Math.trunc(p * (1 + multiplier));
-                q = Math.trunc(q * (1 + multiplier));
-                e = Math.trunc(e * (1 + multiplier));
+                p = roundStat(p * (1 + multiplier));
+                q = roundStat(q * (1 + multiplier));
+                e = roundStat(e * (1 + multiplier));
             }
 
             p += negFeedbackBonus;
@@ -667,7 +673,7 @@ export function useOptimizer() {
             e += negFeedbackBonus;
 
             const statScore = (p * weightP) + (q * weightQ) + (e * weightE) + nodeBonusScore;
-            return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000) - (nodeNodeContactCount * 0.001);
+            return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000);
         };
 
         while (isSolvingRef.current) {
@@ -847,6 +853,7 @@ export function useOptimizer() {
             if (currentScore > localBestScore) {
                 localBestScore = currentScore;
                 currentBoardState = testBoard.map(row => [...row]);
+                localBestTotals = totals;
                 setBestTotals(totals);
                 setBestPieceStats(new Map(pieceStats));
                 setBoard(testBoard.map(row => [...row]));
@@ -920,7 +927,25 @@ export function useOptimizer() {
             });
         });
 
-        setSolutionCode(writer.toBase85());
+        const generatedCode = writer.toBase85();
+        setSolutionCode(generatedCode);
+
+        const hasNeuralCore = inventory.some(item => item.displayName.includes('Neural Core'));
+        const averageStat = (localBestTotals.Performance + localBestTotals.Quality + localBestTotals.Efficiency) / 3;
+
+        const submission = {
+            tier,
+            has_neural_core: hasNeuralCore,
+            performance: localBestTotals.Performance,
+            quality: localBestTotals.Quality,
+            efficiency: localBestTotals.Efficiency,
+            average_stat: parseFloat(averageStat.toFixed(2)),
+            solution_code: generatedCode
+        };
+
+        supabase.from('leaderboards').insert([submission]).then(({ error }) => {
+            if (error) console.error(error);
+        });
     };
 
     return {
