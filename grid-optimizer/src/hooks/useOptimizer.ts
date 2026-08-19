@@ -95,7 +95,9 @@ class BitReader {
     }
 }
 
-const roundStat = (val: number) => val < 0 ? Math.ceil(val) : Math.floor(val);
+// fix for floating-point multiplication
+const STAT_EPSILON = 1e-9;
+const roundStat = (val: number) => val < 0 ? Math.ceil(val - STAT_EPSILON) : Math.floor(val + STAT_EPSILON);
 
 const generateCodeFromState = (
     currentTier: GridTier,
@@ -259,18 +261,19 @@ export const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | nu
         }
     }
 
-    const internalStats = new Map<string, Stats>();
+    const selfStats = new Map<string, Stats>();
+    const absorptionStats = new Map<string, Stats>();
     placedPieces.forEach(({ item }) => {
         if (item.displayName.includes('Alarm Module')) placedAlarmsCount++;
         if (item.displayName.includes('Junk Processing')) placedJunkCount++;
         if (item.displayName.includes('Blast Module')) placedBlastCount++;
 
         if (item.color !== 'White') {
-            let modified = applyInternalEffects(item);
+            selfStats.set(item.id, applyInternalEffects(item));
 
             const nfCount = item.effects.filter(e => e === 'Negative Feedback').length;
+            let nfPerf = 0, nfQual = 0, nfEff = 0;
             if (nfCount > 0) {
-                let nfPerf = 0, nfQual = 0, nfEff = 0;
                 const adjacentNeighborIds = new Set<string>();
 
                 gridItemMap.forEach((cellItem, coordStr) => {
@@ -296,23 +299,19 @@ export const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | nu
                         if (neighborBase.Efficiency < 0) nfEff += neighborBase.Efficiency;
                     }
                 });
-
-                modified.Performance += (nfCount * 0.25 * nfPerf);
-                modified.Quality += (nfCount * 0.25 * nfQual);
-                modified.Efficiency += (nfCount * 0.25 * nfEff);
             }
 
-            modified.Performance = roundStat(modified.Performance);
-            modified.Quality = roundStat(modified.Quality);
-            modified.Efficiency = roundStat(modified.Efficiency);
-
-            internalStats.set(item.id, modified);
+            absorptionStats.set(item.id, {
+                Performance: nfCount * 0.25 * nfPerf,
+                Quality: nfCount * 0.25 * nfQual,
+                Efficiency: nfCount * 0.25 * nfEff
+            });
         }
     });
 
     placedPieces.forEach(({ item, minX, minY }) => {
         if (item.color !== 'White') {
-            let { Performance: p, Quality: q, Efficiency: e } = internalStats.get(item.id)!;
+            let { Performance: p, Quality: q, Efficiency: e } = selfStats.get(item.id)!;
 
             let multiplier = 0;
             if (item.effects.includes('Side Mount') && minX === 0) multiplier += 0.20;
@@ -329,6 +328,11 @@ export const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | nu
                 q = roundStat(q * (1 + multiplier));
                 e = roundStat(e * (1 + multiplier));
             }
+
+            const absorb = absorptionStats.get(item.id)!;
+            p += absorb.Performance;
+            q += absorb.Quality;
+            e += absorb.Efficiency;
 
             const finalStats = {
                 Performance: roundStat(p),
@@ -347,12 +351,11 @@ export const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | nu
         let nodeP = 0, nodeQ = 0, nodeE = 0;
 
         adjIds.forEach(adjId => {
-            const adjacentItemData = placedPieces.get(adjId);
-            if (adjacentItemData) {
-                const baseAdj = applyInternalEffects(adjacentItemData.item);
-                nodeP += baseAdj.Performance;
-                nodeQ += baseAdj.Quality;
-                nodeE += baseAdj.Efficiency;
+            const adjSelf = selfStats.get(adjId);
+            if (adjSelf) {
+                nodeP += adjSelf.Performance;
+                nodeQ += adjSelf.Quality;
+                nodeE += adjSelf.Efficiency;
             }
         });
 
@@ -383,7 +386,7 @@ export const evaluatePlacementDelta = (
 ) => {
     let isConnected = false;
     let adjNodes = 0;
-    let negFeedbackBonus = 0;
+    let negFeedbackBonusP = 0, negFeedbackBonusQ = 0, negFeedbackBonusE = 0;
     let negativeContactCount = 0;
 
     const internal = precomputedInternal.get(piece.id)!;
@@ -460,9 +463,9 @@ export const evaluatePlacementDelta = (
 
         if (nfCount > 0 && adjPiece.color !== 'White') {
             const adjInternal = precomputedInternal.get(adjId)!;
-            if (adjInternal.Performance < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjInternal.Performance);
-            if (adjInternal.Quality < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjInternal.Quality);
-            if (adjInternal.Efficiency < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjInternal.Efficiency);
+            if (adjInternal.Performance < 0) negFeedbackBonusP += roundStat(nfCount * 0.25 * adjInternal.Performance);
+            if (adjInternal.Quality < 0) negFeedbackBonusQ += roundStat(nfCount * 0.25 * adjInternal.Quality);
+            if (adjInternal.Efficiency < 0) negFeedbackBonusE += roundStat(nfCount * 0.25 * adjInternal.Efficiency);
         }
     });
 
@@ -474,9 +477,9 @@ export const evaluatePlacementDelta = (
         e = roundStat(e * (1 + multiplier));
     }
 
-    p += negFeedbackBonus;
-    q += negFeedbackBonus;
-    e += negFeedbackBonus;
+    p += negFeedbackBonusP;
+    q += negFeedbackBonusQ;
+    e += negFeedbackBonusE;
 
     const statScore = (p * weightP) + (q * weightQ) + (e * weightE) + nodeBonusScore;
     return statScore + (adjNodes * 0.05) - (negativeContactCount * 1000);
@@ -780,7 +783,7 @@ export function useOptimizer(
 
     const manuallyPlaceItem = (item: InventoryItem, rootX: number, rootY: number, offsets: Point[]) => {
         const next = boardRef.current.map(row => [...row]);
-        let swapItemIds = new Set<string>();
+        const swapItemIds = new Set<string>();
 
         for (const pt of offsets) {
             const px = rootX + pt.x;
