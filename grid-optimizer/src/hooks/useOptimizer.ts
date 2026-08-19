@@ -97,6 +97,97 @@ class BitReader {
 
 const roundStat = (val: number) => val < 0 ? Math.ceil(val) : Math.floor(val);
 
+const generateCodeFromState = (
+    currentTier: GridTier,
+    maxStats: { Performance: boolean, Quality: boolean, Efficiency: boolean },
+    tarStats: TargetStats,
+    inv: InventoryItem[],
+    brd: (InventoryItem | 'Locked' | null)[][]
+) => {
+    const writer = new BitWriter();
+
+    writer.write(currentTier, 2);
+
+    writer.write(maxStats.Performance ? 1 : 0, 1);
+    writer.write(maxStats.Quality ? 1 : 0, 1);
+    writer.write(maxStats.Efficiency ? 1 : 0, 1);
+
+    const writeTarget = (val: number | null) => {
+        if (val === null) {
+            writer.write(0, 1);
+        } else {
+            writer.write(1, 1);
+            writer.write(val + 2048, 12);
+        }
+    };
+    writeTarget(tarStats.Performance);
+    writeTarget(tarStats.Quality);
+    writeTarget(tarStats.Efficiency);
+
+    writer.write(inv.length, 8);
+
+    const placedItemsMap = new Map<string, number[]>();
+    brd.forEach((row, y) => row.forEach((cell, x) => {
+        if (cell && cell !== 'Locked') {
+            if (!placedItemsMap.has(cell.id)) {
+                placedItemsMap.set(cell.id, []);
+            }
+            placedItemsMap.get(cell.id)!.push(y * 7 + x);
+        }
+    }));
+
+    inv.forEach(item => {
+        writer.write(SHAPE_MAP.indexOf(item.shape), 4);
+        writer.write(COLOR_MAP_KEYS.indexOf(item.color), 3);
+
+        const positions = placedItemsMap.get(item.id) || [];
+        writer.write(positions.length, 3);
+        positions.forEach(p => writer.write(p, 6));
+
+        item.effects.forEach((eff, idx) => {
+            if (eff === 'None') {
+                writer.write(0, 1);
+            } else {
+                writer.write(1, 1);
+                writer.write(EFFECT_MAP.indexOf(eff), 4);
+
+                if (eff === 'Learning Algorithm' || eff === 'Degrading') {
+                    writer.write(1, 1);
+                    writer.write(item.effectValues[idx] + 2048, 12);
+                } else {
+                    writer.write(0, 1);
+                }
+            }
+        });
+    });
+
+    return writer.toBase85();
+};
+
+const saveToDatabase = (
+    currentTier: GridTier,
+    totals: Stats,
+    code: string,
+    inv: InventoryItem[]
+) => {
+    const hasNeuralCore = inv.some(item => item.displayName.includes('Neural Core'));
+    const averageStat = (totals.Performance + totals.Quality + totals.Efficiency) / 3;
+
+    const submission = {
+        tier: currentTier,
+        has_neural_core: hasNeuralCore,
+        performance: totals.Performance,
+        quality: totals.Quality,
+        efficiency: totals.Efficiency,
+        average_stat: parseFloat(averageStat.toFixed(2)),
+        solution_code: code
+    };
+
+    supabase.from('leaderboards').insert([submission]).then(({ error }) => {
+        if (error) console.error(error);
+    });
+};
+
 export function useOptimizer() {
     const [tier, setTier] = useState<GridTier>(3);
 
@@ -123,7 +214,6 @@ export function useOptimizer() {
     const [isSolving, setIsSolving] = useState(false);
     const [warningMsg, setWarningMsg] = useState<string | null>(null);
     const [solutionCode, setSolutionCode] = useState<string>('');
-    const [hasManualChanges, setHasManualChanges] = useState(false);
     const isSolvingRef = useRef(false);
 
     useEffect(() => {
@@ -148,7 +238,6 @@ export function useOptimizer() {
         setBestPieceStats(new Map());
         setWarningMsg(null);
         setSolutionCode('');
-        setHasManualChanges(false);
     };
 
     const resetBoard = () => {
@@ -164,92 +253,9 @@ export function useOptimizer() {
         setTargetStats({ Performance: null, Quality: null, Efficiency: null });
         setMaximizeStats({ Performance: false, Quality: false, Efficiency: false });
         setSolutionCode('');
-        setHasManualChanges(false);
-    };
-
-    const exportManualSolution = () => {
-        const writer = new BitWriter();
-
-        writer.write(tier, 2);
-
-        writer.write(maximizeStats.Performance ? 1 : 0, 1);
-        writer.write(maximizeStats.Quality ? 1 : 0, 1);
-        writer.write(maximizeStats.Efficiency ? 1 : 0, 1);
-
-        const writeTarget = (val: number | null) => {
-            if (val === null) {
-                writer.write(0, 1);
-            } else {
-                writer.write(1, 1);
-                writer.write(val + 2048, 12);
-            }
-        };
-        writeTarget(targetStats.Performance);
-        writeTarget(targetStats.Quality);
-        writeTarget(targetStats.Efficiency);
-
-        writer.write(inventory.length, 8);
-
-        const placedItemsMap = new Map<string, number[]>();
-        board.forEach((row, y) => row.forEach((cell, x) => {
-            if (cell && cell !== 'Locked') {
-                if (!placedItemsMap.has(cell.id)) {
-                    placedItemsMap.set(cell.id, []);
-                }
-                placedItemsMap.get(cell.id)!.push(y * 7 + x);
-            }
-        }));
-
-        inventory.forEach(item => {
-            writer.write(SHAPE_MAP.indexOf(item.shape), 4);
-            writer.write(COLOR_MAP_KEYS.indexOf(item.color), 3);
-
-            const positions = placedItemsMap.get(item.id) || [];
-            writer.write(positions.length, 3);
-            positions.forEach(p => writer.write(p, 6));
-
-            item.effects.forEach((eff, idx) => {
-                if (eff === 'None') {
-                    writer.write(0, 1);
-                } else {
-                    writer.write(1, 1);
-                    writer.write(EFFECT_MAP.indexOf(eff), 4);
-
-                    if (eff === 'Learning Algorithm' || eff === 'Degrading') {
-                        writer.write(1, 1);
-                        writer.write(item.effectValues[idx] + 2048, 12);
-                    } else {
-                        writer.write(0, 1);
-                    }
-                }
-            });
-        });
-
-        const generatedCode = writer.toBase85();
-        setSolutionCode(generatedCode);
-
-        const hasNeuralCore = inventory.some(item => item.displayName.includes('Neural Core'));
-        const averageStat = (bestTotals.Performance + bestTotals.Quality + bestTotals.Efficiency) / 3;
-
-        const submission = {
-            tier,
-            has_neural_core: hasNeuralCore,
-            performance: bestTotals.Performance,
-            quality: bestTotals.Quality,
-            efficiency: bestTotals.Efficiency,
-            average_stat: parseFloat(averageStat.toFixed(2)),
-            solution_code: generatedCode
-        };
-
-        supabase.from('leaderboards').insert([submission]).then(({ error }) => {
-            if (error) console.error(error);
-        });
-
-        setHasManualChanges(false);
     };
 
     const manuallyPlaceItem = (item: InventoryItem, rootX: number, rootY: number, offsets: Point[]) => {
-        setHasManualChanges(true);
         setBoard(prev => {
             const next = prev.map(row => [...row]);
             let swapItemIds = new Set<string>();
@@ -288,7 +294,6 @@ export function useOptimizer() {
     };
 
     const manuallyRemoveItem = (itemId: string) => {
-        setHasManualChanges(true);
         setBoard(prev => {
             const next = prev.map(row => [...row]);
             for (let y = 0; y < 5; y++) {
@@ -575,7 +580,6 @@ export function useOptimizer() {
             setBoard(newBoard);
             setSolutionCode(code);
             setWarningMsg(null);
-            setHasManualChanges(false);
 
             const { totals, pieceStats } = calculateBoardStats(newBoard, newInventory);
             setBestTotals(totals);
@@ -606,16 +610,27 @@ export function useOptimizer() {
             setBestTotals(totals);
             setBestPieceStats(new Map(pieceStats));
             if (boardChanged) setBoard(newBoard);
+
+            if (inventory.length > 0) {
+                const newCode = generateCodeFromState(tier, maximizeStats, targetStats, inventory, boardToCalculate);
+                setSolutionCode(newCode);
+
+                const timer = setTimeout(() => {
+                    saveToDatabase(tier, totals, newCode, inventory);
+                }, 60000);
+
+                return () => clearTimeout(timer);
+            } else {
+                setSolutionCode('');
+            }
         }
-    }, [inventory, board]);
+    }, [inventory, board, tier, maximizeStats, targetStats]);
 
     const runOptimization = async () => {
         if (isSolving) {
             isSolvingRef.current = false;
             return;
         }
-
-        setHasManualChanges(false);
 
         if (inventory.length === 0) {
             setWarningMsg(`Cannot optimize: You have no modules selected.`);
@@ -1030,82 +1045,9 @@ export function useOptimizer() {
 
         setIsSolving(false);
 
-        const writer = new BitWriter();
-
-        writer.write(tier, 2);
-
-        writer.write(activeMax.Performance ? 1 : 0, 1);
-        writer.write(activeMax.Quality ? 1 : 0, 1);
-        writer.write(activeMax.Efficiency ? 1 : 0, 1);
-
-        const writeTarget = (val: number | null) => {
-            if (val === null) {
-                writer.write(0, 1);
-            } else {
-                writer.write(1, 1);
-                writer.write(val + 2048, 12);
-            }
-        };
-        writeTarget(activeTar.Performance);
-        writeTarget(activeTar.Quality);
-        writeTarget(activeTar.Efficiency);
-
-        writer.write(inventory.length, 8);
-
-        const placedItemsMap = new Map<string, number[]>();
-        bestVisualBoard.forEach((row, y) => row.forEach((cell, x) => {
-            if (cell && cell !== 'Locked') {
-                if (!placedItemsMap.has(cell.id)) {
-                    placedItemsMap.set(cell.id, []);
-                }
-                placedItemsMap.get(cell.id)!.push(y * 7 + x);
-            }
-        }));
-
-        inventory.forEach(item => {
-            writer.write(SHAPE_MAP.indexOf(item.shape), 4);
-            writer.write(COLOR_MAP_KEYS.indexOf(item.color), 3);
-
-            const positions = placedItemsMap.get(item.id) || [];
-            writer.write(positions.length, 3);
-            positions.forEach(p => writer.write(p, 6));
-
-            item.effects.forEach((eff, idx) => {
-                if (eff === 'None') {
-                    writer.write(0, 1);
-                } else {
-                    writer.write(1, 1);
-                    writer.write(EFFECT_MAP.indexOf(eff), 4);
-
-                    if (eff === 'Learning Algorithm' || eff === 'Degrading') {
-                        writer.write(1, 1);
-                        writer.write(item.effectValues[idx] + 2048, 12);
-                    } else {
-                        writer.write(0, 1);
-                    }
-                }
-            });
-        });
-
-        const generatedCode = writer.toBase85();
+        const generatedCode = generateCodeFromState(tier, activeMax, activeTar, inventory, bestVisualBoard);
         setSolutionCode(generatedCode);
-
-        const hasNeuralCore = inventory.some(item => item.displayName.includes('Neural Core'));
-        const averageStat = (localBestTotals.Performance + localBestTotals.Quality + localBestTotals.Efficiency) / 3;
-
-        const submission = {
-            tier,
-            has_neural_core: hasNeuralCore,
-            performance: localBestTotals.Performance,
-            quality: localBestTotals.Quality,
-            efficiency: localBestTotals.Efficiency,
-            average_stat: parseFloat(averageStat.toFixed(2)),
-            solution_code: generatedCode
-        };
-
-        supabase.from('leaderboards').insert([submission]).then(({ error }) => {
-            if (error) console.error(error);
-        });
+        saveToDatabase(tier, localBestTotals, generatedCode, inventory);
     };
 
     return {
@@ -1117,7 +1059,6 @@ export function useOptimizer() {
         isSolving, warningMsg, setWarningMsg,
         solutionCode, setSolutionCode, importSolution,
         runOptimization, resetBoard,
-        manuallyPlaceItem, manuallyRemoveItem,
-        exportManualSolution, hasManualChanges
+        manuallyPlaceItem, manuallyRemoveItem
     };
 }

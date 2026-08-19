@@ -16,8 +16,7 @@ export default function ModuleInventoryUI() {
         isSolving, warningMsg,
         solutionCode, setSolutionCode, importSolution,
         runOptimization, resetBoard,
-        manuallyPlaceItem, manuallyRemoveItem,
-        exportManualSolution, hasManualChanges
+        manuallyPlaceItem, manuallyRemoveItem
     } = useOptimizer();
 
     const [filterGroup, setFilterGroup] = useState<FilterGroup>('All');
@@ -487,7 +486,7 @@ export default function ModuleInventoryUI() {
             </style>
 
             {/* Tooltip */}
-            {hoveredItem && hoverInfo && (
+            {hoveredItem && hoverInfo && !dragState && (
                 <div style={{
                     position: 'fixed',
                     top: hoverInfo.y + 15,
@@ -535,7 +534,11 @@ export default function ModuleInventoryUI() {
             )}
 
             {/* Main Grid & Controls */}
-            <div style={{ flex: '0 0 auto', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ flex: '0 0 auto', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+
+                <div style={{ marginBottom: '15px', color: '#888', fontSize: '0.8em' }}>
+                    <strong>Tip:</strong> While dragging a module, press <strong>Q</strong> (counter-clockwise), <strong>E</strong> (clockwise), or <strong>F</strong> (flip) to rotate the shadow.
+                </div>
 
                 <div className="stats-header">
                     <div style={{ textAlign: 'center' }}>
@@ -703,23 +706,6 @@ export default function ModuleInventoryUI() {
                         }}
                     >
                         {isSolving ? 'Stop Optimizer' : 'Run Optimizer'}
-                    </button>
-
-                    <button
-                        onClick={exportManualSolution}
-                        disabled={!(hasManualChanges && !isSolving)}
-                        style={{
-                            padding: '10px 24px',
-                            backgroundColor: '#2196f3',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontWeight: 'bold',
-                            cursor: (hasManualChanges && !isSolving) ? 'pointer' : 'default',
-                            visibility: (hasManualChanges && !isSolving) ? 'visible' : 'hidden'
-                        }}
-                    >
-                        Save / Export
                     </button>
                 </div>
 
