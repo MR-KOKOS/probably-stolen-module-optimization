@@ -179,30 +179,135 @@ export default function ModuleInventoryUI() {
         : [NODE_TEMPLATE, ...filteredModules];
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#111', color: '#eee', fontFamily: 'sans-serif', padding: '20px' }}>
+        <div className="main-container">
 
             <style>
                 {`
-          .catalog-card {
-            transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out, background-color 0.1s ease-in-out;
-          }
-          .catalog-card:hover {
-            transform: translateY(-2px);
-            background-color: #2a2a2a !important;
-            box-shadow: 0 4px 12px rgba(255, 255, 255, 0.05);
-          }
-          .catalog-card:active {
-            transform: translateY(0);
-          }
-          input[type=number]::-webkit-inner-spin-button, 
-          input[type=number]::-webkit-outer-spin-button { 
-            -webkit-appearance: none; 
-            margin: 0; 
-          }
-          input[type=number] { 
-            -moz-appearance: textfield; 
-          }
-        `}
+                .catalog-card {
+                    transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out, background-color 0.1s ease-in-out;
+                }
+                .catalog-card:hover {
+                    transform: translateY(-2px);
+                    background-color: #2a2a2a !important;
+                    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.05);
+                }
+                .catalog-card:active {
+                    transform: translateY(0);
+                }
+                input[type=number]::-webkit-inner-spin-button, 
+                input[type=number]::-webkit-outer-spin-button { 
+                    -webkit-appearance: none; 
+                    margin: 0; 
+                }
+                input[type=number] { 
+                    -moz-appearance: textfield; 
+                }
+                
+                /* Layout Classes */
+                .main-container {
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 100vh;
+                    background-color: #111;
+                    color: #eee;
+                    font-family: sans-serif;
+                    padding: 20px;
+                }
+                .stats-header {
+                    display: flex;
+                    gap: 40px;
+                    margin-bottom: 15px;
+                    background-color: #1a1a1a;
+                    padding: 15px 30px;
+                    border-radius: 8px;
+                    border: 1px solid #333;
+                }
+                .grid-wrapper {
+                    display: grid;
+                    grid-template-columns: repeat(7, 50px);
+                    grid-template-rows: repeat(5, 50px);
+                    gap: 0px;
+                    background-color: #222;
+                    padding: 10px;
+                    border-radius: 8px;
+                    border: 1px solid #333;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+                }
+                .controls-wrapper {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 15px;
+                    margin-top: 10px;
+                    align-items: center;
+                    justify-content: center;
+                    width: 100%;
+                }
+                .solution-ui {
+                    display: flex;
+                    width: 100%;
+                    margin-top: 15px;
+                    gap: 10px;
+                    justify-content: center;
+                    align-items: center;
+                }
+                .solution-ui input {
+                    flex: 1;
+                    max-width: 500px;
+                    padding: 8px;
+                    font-size: 0.8em;
+                    background-color: #111;
+                    color: #eee;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                }
+                .bottom-layout {
+                    display: flex;
+                    flex: 1;
+                    gap: 30px;
+                    min-height: 0;
+                }
+                
+                @media (max-width: 768px) {
+                    .main-container {
+                        padding: 10px;
+                        height: auto;
+                    }
+                    .bottom-layout {
+                        flex-direction: column;
+                        gap: 15px;
+                        min-height: auto;
+                    }
+                    .stats-header {
+                        gap: 15px;
+                        padding: 10px;
+                        width: 100%;
+                        justify-content: space-around;
+                    }
+                    .grid-wrapper {
+                        transform: scale(0.85);
+                        transform-origin: top center;
+                        margin-bottom: -25px;
+                    }
+                    .controls-wrapper {
+                        flex-direction: column;
+                        width: 100%;
+                        align-items: stretch;
+                    }
+                    .solution-ui {
+                        flex-wrap: wrap;
+                    }
+                    .solution-ui input {
+                        max-width: 100%;
+                        width: 100%;
+                    }
+                }
+                @media (max-width: 400px) {
+                    .grid-wrapper {
+                        transform: scale(0.75);
+                        margin-bottom: -50px;
+                    }
+                }
+                `}
             </style>
 
             {/* Tooltip */}
@@ -253,10 +358,10 @@ export default function ModuleInventoryUI() {
                 </div>
             )}
 
-            {/* TOP: Main Grid & Controls */}
+            {/* Main Grid & Controls */}
             <div style={{ flex: '0 0 auto', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '20px' }}>
 
-                <div style={{ display: 'flex', gap: '40px', marginBottom: '15px', backgroundColor: '#1a1a1a', padding: '15px 30px', borderRadius: '8px', border: '1px solid #333' }}>
+                <div className="stats-header">
                     <div style={{ textAlign: 'center' }}>
                         <span style={{ color: '#aaa', fontSize: '0.8em', textTransform: 'uppercase' }}>Performance</span>
                         <div style={{ fontSize: '1.6em', fontWeight: 'bold', color: getStatColor(bestTotals.Performance) }}>
@@ -277,17 +382,7 @@ export default function ModuleInventoryUI() {
                     </div>
                 </div>
 
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(7, 50px)',
-                    gridTemplateRows: 'repeat(5, 50px)',
-                    gap: '0px',
-                    backgroundColor: '#222',
-                    padding: '10px',
-                    borderRadius: '8px',
-                    border: '1px solid #333',
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
-                }}>
+                <div className="grid-wrapper">
                     {board.map((row, y) =>
                         row.map((cell, x) => (
                             <div
@@ -313,12 +408,12 @@ export default function ModuleInventoryUI() {
                 <div style={{ minHeight: '22px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {warningMsg && (
                         <span style={{ color: '#ff4d4d', fontSize: '0.8em', textAlign: 'center' }}>
-              ⚠ {warningMsg}
-            </span>
+                            ⚠ {warningMsg}
+                        </span>
                     )}
                 </div>
 
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '10px', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+                <div className="controls-wrapper">
                     <div style={{ display: 'flex', gap: '5px', backgroundColor: '#222', padding: '5px', borderRadius: '6px' }}>
                         {[1, 2, 3].map((t) => (
                             <button key={t} onClick={() => handleTierChange(t as GridTier)} disabled={isSolving} style={{ padding: '8px 16px', backgroundColor: tier === t ? '#555' : 'transparent', color: 'white', border: 'none', borderRadius: '4px', cursor: isSolving ? 'not-allowed' : 'pointer' }}>
@@ -381,7 +476,7 @@ export default function ModuleInventoryUI() {
                 </div>
 
                 {/* Solution Code UI */}
-                <div style={{ display: 'flex', width: '100%', marginTop: '15px', gap: '10px', justifyContent: 'center', alignItems: 'center' }}>
+                <div className="solution-ui">
                     <span style={{ fontSize: '0.8em', color: '#888' }}>Solution Code:</span>
                     <input
                         type="text"
@@ -389,40 +484,41 @@ export default function ModuleInventoryUI() {
                         onChange={(e) => setSolutionCode(e.target.value)}
                         placeholder="Paste an exported solution code here to import..."
                         disabled={isSolving}
-                        style={{ flex: 1, maxWidth: '500px', padding: '8px', fontSize: '0.8em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '4px' }}
                     />
-                    <button
-                        onClick={() => importSolution(solutionCode)}
-                        disabled={!solutionCode || isSolving}
-                        style={{ padding: '8px 16px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: (!solutionCode || isSolving) ? 'not-allowed' : 'pointer' }}
-                    >
-                        Import
-                    </button>
-                    <button
-                        onClick={() => navigator.clipboard.writeText(solutionCode)}
-                        disabled={!solutionCode}
-                        style={{ padding: '8px 16px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: !solutionCode ? 'not-allowed' : 'pointer' }}
-                    >
-                        Copy
-                    </button>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button
+                            onClick={() => importSolution(solutionCode)}
+                            disabled={!solutionCode || isSolving}
+                            style={{ padding: '8px 16px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: (!solutionCode || isSolving) ? 'not-allowed' : 'pointer' }}
+                        >
+                            Import
+                        </button>
+                        <button
+                            onClick={() => navigator.clipboard.writeText(solutionCode)}
+                            disabled={!solutionCode}
+                            style={{ padding: '8px 16px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: !solutionCode ? 'not-allowed' : 'pointer' }}
+                        >
+                            Copy
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {/* BOTTOM: Catalog & Inventory */}
-            <div style={{ display: 'flex', flex: '1', gap: '30px', minHeight: 0 }}>
+            {/* Catalog & Inventory */}
+            <div className="bottom-layout">
 
                 {/* Catalog */}
                 <div style={{ flex: '2', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #333' }}>
-                        <select value={filterGroup} onChange={(e) => setFilterGroup(e.target.value as FilterGroup)} style={{ padding: '8px 12px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', outline: 'none' }}>
+                        <select value={filterGroup} onChange={(e) => setFilterGroup(e.target.value as FilterGroup)} style={{ flex: 1, minWidth: '150px', padding: '8px 12px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', outline: 'none' }}>
                             <option value="All">All Module Groups</option>
                             <option value="Performance">Performance (Red)</option>
                             <option value="Quality">Quality (Yellow)</option>
                             <option value="Efficiency">Efficiency (Green)</option>
                             <option value="Special">Special Modules</option>
                         </select>
-                        <select value={filterSize} onChange={(e) => setFilterSize(e.target.value === 'All' ? 'All' : Number(e.target.value) as any)} style={{ padding: '8px 12px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', outline: 'none' }}>
+                        <select value={filterSize} onChange={(e) => setFilterSize(e.target.value === 'All' ? 'All' : Number(e.target.value) as any)} style={{ flex: 1, minWidth: '150px', padding: '8px 12px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', outline: 'none' }}>
                             <option value="All">All Sizes</option>
                             <option value={3}>Size 3</option>
                             <option value={4}>Size 4</option>
@@ -430,7 +526,7 @@ export default function ModuleInventoryUI() {
                         </select>
                     </div>
 
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', overflowY: 'auto', alignContent: 'flex-start', padding: '5px 5px 20px 5px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', overflowY: 'auto', alignContent: 'flex-start', padding: '5px 5px 20px 5px', justifyContent: 'center' }}>
                         {catalogDisplayList.map((template, idx) => {
                             const uniqueKey = `${template.shape}_${template.color}_${idx}`;
 
@@ -456,11 +552,11 @@ export default function ModuleInventoryUI() {
                                             <MiniShape shape={template.shape} colorHex={COLOR_MAP[template.color]} />
                                         </div>
                                         <span style={{ fontSize: '0.7em', color: '#ccc', marginTop: '15px', textAlign: 'center', fontWeight: 'bold' }}>
-                      {template.displayName}
-                    </span>
+                                            {template.displayName}
+                                        </span>
                                         <span style={{ fontSize: '0.65em', color: '#777', marginTop: '6px', textAlign: 'center' }}>
-                      {template.shape === 'Node1x2' ? 'Node' : `${template.shapeType} - Size ${template.size}`}
-                    </span>
+                                            {template.shape === 'Node1x2' ? 'Node' : `${template.shapeType} - Size ${template.size}`}
+                                        </span>
                                     </div>
                                 </div>
                             );
@@ -468,7 +564,7 @@ export default function ModuleInventoryUI() {
                     </div>
                 </div>
 
-                {/* Right Panel: Inventory */}
+                {/* Inventory */}
                 <div style={{ flex: '1', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' }}>
                         <span style={{ color: '#888', fontSize: '0.9em' }}>{inventory.length} Selected</span>
@@ -508,7 +604,7 @@ export default function ModuleInventoryUI() {
                                                             <select
                                                                 value={currentEffect}
                                                                 onChange={(e) => updateItemEffect(item, effectIdx as 0 | 1, e.target.value as ItemEffect)}
-                                                                style={{ flex: 1, padding: '2px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px' }}
+                                                                style={{ flex: 1, padding: '2px', fontSize: '0.7em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '3px', minWidth: '0' }}
                                                             >
                                                                 {EFFECTS_LIST.filter(eff => eff === 'None' || eff !== item.effects[effectIdx === 0 ? 1 : 0]).map(eff => (
                                                                     <option key={eff} value={eff}>{eff === 'None' ? 'No Effect' : eff}</option>
