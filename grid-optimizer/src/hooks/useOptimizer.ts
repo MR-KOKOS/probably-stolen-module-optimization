@@ -399,7 +399,7 @@ export function useOptimizer() {
                     adjacentNeighborIds.forEach(neighborId => {
                         const neighborItem = Array.from(gridItemMap.values()).find(i => i.id === neighborId);
                         if (neighborItem) {
-                            const neighborBase = getEffectiveBaseStats(neighborItem);
+                            const neighborBase = applyInternalEffects(neighborItem);
                             if (neighborBase.Performance < 0) nfPerf += neighborBase.Performance;
                             if (neighborBase.Quality < 0) nfQual += neighborBase.Quality;
                             if (neighborBase.Efficiency < 0) nfEff += neighborBase.Efficiency;
@@ -458,7 +458,7 @@ export function useOptimizer() {
             adjIds.forEach(adjId => {
                 const adjacentItemData = placedPieces.get(adjId);
                 if (adjacentItemData) {
-                    const baseAdj = getEffectiveBaseStats(adjacentItemData.item);
+                    const baseAdj = applyInternalEffects(adjacentItemData.item);
                     nodeP += baseAdj.Performance;
                     nodeQ += baseAdj.Quality;
                     nodeE += baseAdj.Efficiency;
@@ -753,7 +753,6 @@ export function useOptimizer() {
             let negFeedbackBonus = 0;
             let negativeContactCount = 0;
 
-            const base = precomputedBase.get(piece.id)!;
             const internal = precomputedInternal.get(piece.id)!;
             let p = internal.Performance;
             let q = internal.Quality;
@@ -816,21 +815,21 @@ export function useOptimizer() {
 
                 if (piece.color !== 'White' && adjPiece.color === 'White') {
                     adjNodes++;
-                    nodeBonusScore += roundStat(base.Performance * 0.20) * weightP;
-                    nodeBonusScore += roundStat(base.Quality * 0.20) * weightQ;
-                    nodeBonusScore += roundStat(base.Efficiency * 0.20) * weightE;
+                    nodeBonusScore += roundStat(internal.Performance * 0.20) * weightP;
+                    nodeBonusScore += roundStat(internal.Quality * 0.20) * weightQ;
+                    nodeBonusScore += roundStat(internal.Efficiency * 0.20) * weightE;
                 } else if (piece.color === 'White' && adjPiece.color !== 'White') {
-                    const adjBase = precomputedBase.get(adjId)!;
-                    nodeBonusScore += roundStat(adjBase.Performance * 0.20) * weightP;
-                    nodeBonusScore += roundStat(adjBase.Quality * 0.20) * weightQ;
-                    nodeBonusScore += roundStat(adjBase.Efficiency * 0.20) * weightE;
+                    const adjInternal = precomputedInternal.get(adjId)!;
+                    nodeBonusScore += roundStat(adjInternal.Performance * 0.20) * weightP;
+                    nodeBonusScore += roundStat(adjInternal.Quality * 0.20) * weightQ;
+                    nodeBonusScore += roundStat(adjInternal.Efficiency * 0.20) * weightE;
                 }
 
                 if (nfCount > 0 && adjPiece.color !== 'White') {
-                    const adjBase = precomputedBase.get(adjId)!;
-                    if (adjBase.Performance < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjBase.Performance);
-                    if (adjBase.Quality < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjBase.Quality);
-                    if (adjBase.Efficiency < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjBase.Efficiency);
+                    const adjInternal = precomputedInternal.get(adjId)!;
+                    if (adjInternal.Performance < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjInternal.Performance);
+                    if (adjInternal.Quality < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjInternal.Quality);
+                    if (adjInternal.Efficiency < 0) negFeedbackBonus += roundStat(nfCount * 0.25 * adjInternal.Efficiency);
                 }
             });
 
