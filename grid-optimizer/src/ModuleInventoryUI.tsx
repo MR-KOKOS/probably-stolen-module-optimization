@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import type { Stats, GridTier, InventoryItem, FilterGroup, ItemEffect, ModuleTemplate, ModuleColor } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import type { Stats, GridTier, InventoryItem, FilterGroup, ItemEffect, ModuleTemplate, ModuleColor, Point } from './types';
 import { COLOR_MAP, EFFECTS_LIST, MODULE_TEMPLATES, NODE_TEMPLATE } from './constants';
-import { formatStatValue, getStatColor, getBaseStats } from './utils';
+import { formatStatValue, getStatColor, getBaseStats, PRECOMPUTED_OFFSETS } from './utils';
 import { useOptimizer } from './hooks/useOptimizer';
 import MiniShape from './components/MiniShape';
 
@@ -15,14 +15,152 @@ export default function ModuleInventoryUI() {
         board, bestTotals, bestPieceStats,
         isSolving, warningMsg,
         solutionCode, setSolutionCode, importSolution,
-        runOptimization, resetBoard
+        runOptimization, resetBoard,
+        manuallyPlaceItem, manuallyRemoveItem,
+        exportManualSolution, hasManualChanges
     } = useOptimizer();
 
     const [filterGroup, setFilterGroup] = useState<FilterGroup>('All');
     const [filterSize, setFilterSize] = useState<'All' | 3 | 4 | 5>('All');
     const [hoverInfo, setHoverInfo] = useState<{ x: number, y: number, cell: InventoryItem } | null>(null);
 
+    const [dragState, setDragState] = useState<{
+        item: InventoryItem;
+        source: 'inventory' | 'board';
+        offsets: Point[];
+        dragOffsetX: number;
+        dragOffsetY: number;
+        mouseX: number;
+        mouseY: number;
+    } | null>(null);
+
+    const [dragHoverTarget, setDragHoverTarget] = useState<{ x: number, y: number } | null>(null);
+
     const hoveredItem = hoverInfo ? (inventory.find(i => i.id === hoverInfo.cell.id) || hoverInfo.cell) : null;
+
+    const dragRef = useRef(dragState);
+    const targetRef = useRef(dragHoverTarget);
+
+    useEffect(() => { dragRef.current = dragState; }, [dragState]);
+    useEffect(() => { targetRef.current = dragHoverTarget; }, [dragHoverTarget]);
+
+    useEffect(() => {
+        if (!dragState) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            setDragState(prev => prev ? { ...prev, mouseX: e.clientX, mouseY: e.clientY } : null);
+        };
+
+        const handleMouseUp = () => {
+            const currentDrag = dragRef.current;
+            const currentTarget = targetRef.current;
+
+            if (currentDrag && currentTarget) {
+                if (currentTarget.x === -1 && currentDrag.source === 'board') {
+                    manuallyRemoveItem(currentDrag.item.id);
+                } else if (currentTarget.x !== -1) {
+                    const targetX = currentTarget.x - currentDrag.dragOffsetX;
+                    const targetY = currentTarget.y - currentDrag.dragOffsetY;
+                    const isValid = checkValidPlacement(currentDrag.item, targetX, targetY, currentDrag.offsets);
+                    if (isValid) {
+                        manuallyPlaceItem(currentDrag.item, targetX, targetY, currentDrag.offsets);
+                    }
+                }
+            }
+            setDragState(null);
+            setDragHoverTarget(null);
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const currentDrag = dragRef.current;
+            if (!currentDrag) return;
+
+            const key = e.key.toLowerCase();
+            if (!['q', 'e', 'f'].includes(key)) return;
+
+            let transform = (p: Point) => p;
+            let isFlipping = false;
+
+            if (key === 'e') {
+                transform = (p) => ({ x: -p.y, y: p.x });
+            } else if (key === 'q') {
+                transform = (p) => ({ x: p.y, y: -p.x });
+            } else if (key === 'f') {
+                transform = (p) => ({ x: -p.x, y: p.y });
+                isFlipping = true;
+            }
+
+            let rawNewOffsets = currentDrag.offsets.map(transform);
+            let minX = Math.min(...rawNewOffsets.map(p => p.x));
+            let minY = Math.min(...rawNewOffsets.map(p => p.y));
+            let newOffsets = rawNewOffsets.map(p => ({ x: p.x - minX, y: p.y - minY }));
+
+            const areOffsetsEqual = (o1: Point[], o2: Point[]) => {
+                if (o1.length !== o2.length) return false;
+                const set1 = new Set(o1.map(p => `${p.x},${p.y}`));
+                return o2.every(p => set1.has(`${p.x},${p.y}`));
+            };
+
+            if (areOffsetsEqual(currentDrag.offsets, newOffsets)) {
+                if (isFlipping) {
+                    const altTransform = (p: Point) => ({ x: p.x, y: -p.y });
+                    const altRawNewOffsets = currentDrag.offsets.map(altTransform);
+                    const altMinX = Math.min(...altRawNewOffsets.map(p => p.x));
+                    const altMinY = Math.min(...altRawNewOffsets.map(p => p.y));
+                    const altNewOffsets = altRawNewOffsets.map(p => ({ x: p.x - altMinX, y: p.y - altMinY }));
+
+                    if (areOffsetsEqual(currentDrag.offsets, altNewOffsets)) {
+                        return;
+                    } else {
+                        transform = altTransform;
+                        minX = altMinX;
+                        minY = altMinY;
+                        newOffsets = altNewOffsets;
+                    }
+                } else {
+                    return;
+                }
+            }
+
+            const avgX = currentDrag.offsets.reduce((sum, p) => sum + p.x, 0) / currentDrag.offsets.length;
+            const avgY = currentDrag.offsets.reduce((sum, p) => sum + p.y, 0) / currentDrag.offsets.length;
+            let pivotOld = currentDrag.offsets[0];
+            let minDist = Infinity;
+            for (const p of currentDrag.offsets) {
+                const dist = (p.x - avgX) ** 2 + (p.y - avgY) ** 2;
+                if (dist < minDist) {
+                    minDist = dist;
+                    pivotOld = p;
+                }
+            }
+
+            const offsetFromCenterX = currentDrag.dragOffsetX - pivotOld.x;
+            const offsetFromCenterY = currentDrag.dragOffsetY - pivotOld.y;
+
+            const pivotRawNew = transform(pivotOld);
+            const pivotNew = { x: pivotRawNew.x - minX, y: pivotRawNew.y - minY };
+
+            const newDX = pivotNew.x + offsetFromCenterX;
+            const newDY = pivotNew.y + offsetFromCenterY;
+
+            setDragState(prev => prev ? {
+                ...prev,
+                offsets: newOffsets,
+                dragOffsetX: newDX,
+                dragOffsetY: newDY
+            } : null);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [!!dragState]);
 
     const handleMaximizeToggle = (stat: keyof Stats) => {
         setMaximizeStats(prev => ({ ...prev, [stat]: !prev[stat] }));
@@ -107,6 +245,35 @@ export default function ModuleInventoryUI() {
         updateItemEffectValue(item.id, effectIndex, clampedValue);
     };
 
+    const getBoardFootprint = (itemId: string) => {
+        const cells: Point[] = [];
+        for (let y = 0; y < 5; y++) {
+            for (let x = 0; x < 7; x++) {
+                const cell = board[y][x];
+                if (cell && cell !== 'Locked' && cell.id === itemId) cells.push({ x, y });
+            }
+        }
+        if (cells.length === 0) return null;
+        const minX = Math.min(...cells.map(p => p.x));
+        const minY = Math.min(...cells.map(p => p.y));
+        return { minX, minY, offsets: cells.map(p => ({ x: p.x - minX, y: p.y - minY })) };
+    };
+
+    const checkValidPlacement = (item: InventoryItem, rootX: number, rootY: number, offsets: Point[]) => {
+        for (const pt of offsets) {
+            const px = rootX + pt.x;
+            const py = rootY + pt.y;
+            if (px < 0 || px >= 7 || py < 0 || py >= 5) return false;
+
+            const cell = board[py][px];
+            if (cell === 'Locked') return false;
+            if (cell && cell.id !== item.id) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     const getCellStyles = (x: number, y: number, cell: any): React.CSSProperties => {
         if (cell === 'Locked') {
             return { backgroundColor: '#111', border: 'none', boxShadow: 'none' };
@@ -169,7 +336,6 @@ export default function ModuleInventoryUI() {
         if (m.shapeType === 'Node') return false;
         if (filterGroup !== 'All' && m.group !== filterGroup) return false;
         return !(filterSize !== 'All' && m.size !== filterSize);
-
     });
 
     const shouldPushNodeToEnd = filterGroup !== 'All';
@@ -177,6 +343,14 @@ export default function ModuleInventoryUI() {
     const catalogDisplayList = shouldPushNodeToEnd
         ? [...filteredModules, NODE_TEMPLATE]
         : [NODE_TEMPLATE, ...filteredModules];
+
+    const isHoveringRemove = dragHoverTarget && dragHoverTarget.x === -1;
+    const previewRootX = dragState && dragHoverTarget && !isHoveringRemove ? dragHoverTarget.x - dragState.dragOffsetX : null;
+    const previewRootY = dragState && dragHoverTarget && !isHoveringRemove ? dragHoverTarget.y - dragState.dragOffsetY : null;
+
+    const currentPreviewValid = dragState && dragHoverTarget && !isHoveringRemove && previewRootX !== null && previewRootY !== null
+        ? checkValidPlacement(dragState.item, previewRootX, previewRootY, dragState.offsets)
+        : !!isHoveringRemove;
 
     return (
         <div className="main-container">
@@ -212,6 +386,7 @@ export default function ModuleInventoryUI() {
                     color: #eee;
                     font-family: sans-serif;
                     padding: 20px;
+                    user-select: none;
                 }
                 .stats-header {
                     display: flex;
@@ -265,6 +440,7 @@ export default function ModuleInventoryUI() {
                     flex: 1;
                     gap: 30px;
                     min-height: 0;
+                    margin-top: 20px;
                 }
                 
                 @media (max-width: 768px) {
@@ -382,26 +558,81 @@ export default function ModuleInventoryUI() {
                     </div>
                 </div>
 
-                <div className="grid-wrapper">
+                <div
+                    className="grid-wrapper"
+                    onMouseLeave={() => {
+                        if (dragState) {
+                            setDragHoverTarget({ x: -1, y: -1 });
+                        }
+                    }}
+                >
                     {board.map((row, y) =>
-                        row.map((cell, x) => (
-                            <div
-                                key={`${x}-${y}`}
-                                onMouseMove={(e) => {
-                                    if (cell && cell !== 'Locked') {
-                                        setHoverInfo({ x: e.clientX, y: e.clientY, cell });
+                        row.map((cell, x) => {
+                            let isPreviewCell = false;
+
+                            if (dragState && previewRootX !== null && previewRootY !== null) {
+                                for (const pt of dragState.offsets) {
+                                    if (previewRootX + pt.x === x && previewRootY + pt.y === y) {
+                                        isPreviewCell = true;
+                                        break;
                                     }
-                                }}
-                                onMouseLeave={() => setHoverInfo(null)}
-                                style={{
-                                    width: '50px',
-                                    height: '50px',
-                                    ...getCellStyles(x, y, cell),
-                                    cursor: cell && cell !== 'Locked' ? 'crosshair' : 'default',
-                                    boxSizing: 'border-box'
-                                }}
-                            />
-                        ))
+                                }
+                            }
+
+                            const isBeingDragged = dragState && dragState.source === 'board' && cell && cell !== 'Locked' && dragState.item.id === cell.id;
+
+                            return (
+                                <div
+                                    key={`${x}-${y}`}
+                                    onMouseMove={(e) => {
+                                        if (cell && cell !== 'Locked' && !dragState) {
+                                            setHoverInfo({ x: e.clientX, y: e.clientY, cell });
+                                        }
+                                    }}
+                                    onMouseLeave={() => setHoverInfo(null)}
+                                    onMouseDown={(e) => {
+                                        if (isSolving || !cell || cell === 'Locked') return;
+                                        e.preventDefault();
+                                        const footprint = getBoardFootprint(cell.id);
+                                        if (!footprint) return;
+
+                                        setHoverInfo(null);
+                                        setDragState({
+                                            item: cell,
+                                            source: 'board',
+                                            offsets: footprint.offsets,
+                                            dragOffsetX: x - footprint.minX,
+                                            dragOffsetY: y - footprint.minY,
+                                            mouseX: e.clientX,
+                                            mouseY: e.clientY
+                                        });
+                                    }}
+                                    onMouseEnter={() => {
+                                        if (dragState) {
+                                            setDragHoverTarget({ x, y });
+                                        }
+                                    }}
+                                    style={{
+                                        width: '50px',
+                                        height: '50px',
+                                        ...getCellStyles(x, y, cell),
+                                        opacity: isBeingDragged ? 0.3 : 1,
+                                        cursor: cell && cell !== 'Locked' ? (isSolving ? 'not-allowed' : 'grab') : 'default',
+                                        boxSizing: 'border-box',
+                                        position: 'relative'
+                                    }}
+                                >
+                                    {isPreviewCell && (
+                                        <div style={{
+                                            position: 'absolute', inset: 0,
+                                            backgroundColor: currentPreviewValid ? 'rgba(20, 80, 20, 0.85)' : 'rgba(80, 20, 20, 0.85)',
+                                            border: currentPreviewValid ? '2px solid rgba(100, 255, 100, 0.5)' : '2px solid rgba(255, 100, 100, 0.5)',
+                                            zIndex: 10, pointerEvents: 'none'
+                                        }} />
+                                    )}
+                                </div>
+                            );
+                        })
                     )}
                 </div>
 
@@ -472,6 +703,23 @@ export default function ModuleInventoryUI() {
                         }}
                     >
                         {isSolving ? 'Stop Optimizer' : 'Run Optimizer'}
+                    </button>
+
+                    <button
+                        onClick={exportManualSolution}
+                        disabled={!(hasManualChanges && !isSolving)}
+                        style={{
+                            padding: '10px 24px',
+                            backgroundColor: '#2196f3',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontWeight: 'bold',
+                            cursor: (hasManualChanges && !isSolving) ? 'pointer' : 'default',
+                            visibility: (hasManualChanges && !isSolving) ? 'visible' : 'hidden'
+                        }}
+                    >
+                        Save / Export
                     </button>
                 </div>
 
@@ -565,7 +813,16 @@ export default function ModuleInventoryUI() {
                 </div>
 
                 {/* Inventory */}
-                <div style={{ flex: '1', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}>
+                <div
+                    style={{ flex: '1', backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', display: 'flex', flexDirection: 'column' }}
+                    onMouseMove={() => {
+                        if (dragState && dragState.source === 'board') {
+                            if (!dragHoverTarget || dragHoverTarget.x !== -1) {
+                                setDragHoverTarget({ x: -1, y: -1 });
+                            }
+                        }
+                    }}
+                >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' }}>
                         <span style={{ color: '#888', fontSize: '0.9em' }}>{inventory.length} Selected</span>
                         <button
@@ -586,21 +843,39 @@ export default function ModuleInventoryUI() {
 
                     <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '5px' }}>
                         {inventory.map((item) => (
-                            <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', backgroundColor: '#222', borderRadius: '4px', borderLeft: `4px solid ${COLOR_MAP[item.color]}` }}>
+                            <div
+                                key={item.id}
+                                onMouseDown={(e) => {
+                                    if (isSolving) { e.preventDefault(); return; }
+                                    e.preventDefault();
+                                    const offsets = PRECOMPUTED_OFFSETS.get(item.shape)?.[0] || [{x: 0, y: 0}];
+
+                                    setDragState({
+                                        item,
+                                        source: 'inventory',
+                                        offsets,
+                                        dragOffsetX: 0,
+                                        dragOffsetY: 0,
+                                        mouseX: e.clientX,
+                                        mouseY: e.clientY
+                                    });
+                                }}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', backgroundColor: '#222', borderRadius: '4px', borderLeft: `4px solid ${COLOR_MAP[item.color]}`, cursor: isSolving ? 'default' : 'grab' }}
+                            >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
                                     <MiniShape shape={item.shape} colorHex={COLOR_MAP[item.color]} size="10px" />
 
-                                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '4px' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '4px', pointerEvents: 'none' }}>
                                         <span style={{ fontSize: '0.9em', fontWeight: 'bold' }}>{item.displayName}</span>
 
                                         {item.shape !== 'Node1x2' && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '100%' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '100%', pointerEvents: 'auto' }}>
                                                 {[0, 1].map((effectIdx) => {
                                                     const currentEffect = item.effects[effectIdx];
                                                     const showCustomInput = currentEffect === 'Learning Algorithm' || currentEffect === 'Degrading';
 
                                                     return (
-                                                        <div key={effectIdx} style={{ display: 'flex', gap: '6px', alignItems: 'center', width: '100%' }}>
+                                                        <div key={effectIdx} style={{ display: 'flex', gap: '6px', alignItems: 'center', width: '100%' }} onMouseDown={(e) => e.stopPropagation()}>
                                                             <select
                                                                 value={currentEffect}
                                                                 onChange={(e) => updateItemEffect(item, effectIdx as 0 | 1, e.target.value as ItemEffect)}
@@ -631,7 +906,11 @@ export default function ModuleInventoryUI() {
                                     </div>
                                 </div>
                                 <button
-                                    onClick={() => setInventory(prev => prev.filter(i => i.id !== item.id))}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={() => {
+                                        setInventory(prev => prev.filter(i => i.id !== item.id));
+                                        manuallyRemoveItem(item.id);
+                                    }}
                                     disabled={isSolving}
                                     style={{
                                         background: 'none',
@@ -649,6 +928,29 @@ export default function ModuleInventoryUI() {
                     </div>
                 </div>
             </div>
+
+            {dragState && (
+                <div style={{
+                    position: 'fixed',
+                    top: dragState.mouseY - (dragState.dragOffsetY * 50) - 25,
+                    left: dragState.mouseX - (dragState.dragOffsetX * 50) - 25,
+                    pointerEvents: 'none',
+                    zIndex: 9999
+                }}>
+                    {dragState.offsets.map((pt, idx) => (
+                        <div key={idx} style={{
+                            position: 'absolute',
+                            top: pt.y * 50,
+                            left: pt.x * 50,
+                            width: '50px',
+                            height: '50px',
+                            backgroundColor: COLOR_MAP[dragState.item.color as ModuleColor],
+                            border: '2px solid rgba(0,0,0,0.5)',
+                            boxSizing: 'border-box'
+                        }} />
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
