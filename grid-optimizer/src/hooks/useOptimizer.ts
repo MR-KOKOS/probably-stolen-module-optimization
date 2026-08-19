@@ -103,7 +103,18 @@ export function useOptimizer() {
     const [targetStats, setTargetStats] = useState<TargetStats>({ Performance: null, Quality: null, Efficiency: null });
     const [maximizeStats, setMaximizeStats] = useState({ Performance: false, Quality: false, Efficiency: false });
 
-    const [inventory, setInventory] = useState<InventoryItem[]>([]);
+    const [inventory, setInventory] = useState<InventoryItem[]>(() => {
+        const savedInventory = localStorage.getItem('optimizer_inventory');
+        if (savedInventory) {
+            try {
+                return JSON.parse(savedInventory);
+            } catch (e) {
+                console.error("Failed to parse saved inventory", e);
+                return [];
+            }
+        }
+        return [];
+    });
     const [board, setBoard] = useState<(InventoryItem | 'Locked' | null)[][]>(() => initializeBoard(3));
     const [bestTotals, setBestTotals] = useState<Stats>({ Performance: 0, Quality: 0, Efficiency: 0 });
     const [bestPieceStats, setBestPieceStats] = useState<Map<string, Stats>>(new Map());
@@ -112,6 +123,10 @@ export function useOptimizer() {
     const [warningMsg, setWarningMsg] = useState<string | null>(null);
     const [solutionCode, setSolutionCode] = useState<string>('');
     const isSolvingRef = useRef(false);
+
+    useEffect(() => {
+        localStorage.setItem('optimizer_inventory', JSON.stringify(inventory));
+    }, [inventory]);
 
     function initializeBoard(currentTier: GridTier) {
         const grid = Array.from({ length: 5 }, () => Array.from({ length: 7 }, () => null as any));
@@ -141,7 +156,7 @@ export function useOptimizer() {
         setBoard(initializeBoard(tier));
         setBestTotals({ Performance: 0, Quality: 0, Efficiency: 0 });
         setBestPieceStats(new Map());
-        setInventory([]);
+
         setWarningMsg(null);
         setTargetStats({ Performance: null, Quality: null, Efficiency: null });
         setMaximizeStats({ Performance: false, Quality: false, Efficiency: false });
