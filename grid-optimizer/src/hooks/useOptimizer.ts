@@ -188,37 +188,18 @@ const saveToDatabase = (
     });
 };
 
-export function useOptimizer() {
-    const [tier, setTier] = useState<GridTier>(3);
+export function useOptimizer(
+    inventory: InventoryItem[],
+    setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>,
+    machineId: string,
+    getUsedItems: (excludeId: string) => Set<string>,
+    initialTier: GridTier = 3,
+    initialMax = { Performance: false, Quality: false, Efficiency: false }
+) {
+    const [tier, setTier] = useState<GridTier>(initialTier);
 
     const [targetStats, setTargetStats] = useState<TargetStats>({ Performance: null, Quality: null, Efficiency: null });
-    const [maximizeStats, setMaximizeStats] = useState({ Performance: false, Quality: false, Efficiency: false });
-
-    const [inventory, setInventory] = useState<InventoryItem[]>(() => {
-        const savedInventory = localStorage.getItem('optimizer_inventory');
-        if (savedInventory) {
-            try {
-                return JSON.parse(savedInventory);
-            } catch (e) {
-                console.error("Failed to parse saved inventory", e);
-                return [];
-            }
-        }
-        return [];
-    });
-
-    const [board, setBoard] = useState<(InventoryItem | 'Locked' | null)[][]>(() => initializeBoard(3));
-    const [bestTotals, setBestTotals] = useState<Stats>({ Performance: 0, Quality: 0, Efficiency: 0 });
-    const [bestPieceStats, setBestPieceStats] = useState<Map<string, Stats>>(new Map());
-
-    const [isSolving, setIsSolving] = useState(false);
-    const [warningMsg, setWarningMsg] = useState<string | null>(null);
-    const [solutionCode, setSolutionCode] = useState<string>('');
-    const isSolvingRef = useRef(false);
-
-    useEffect(() => {
-        localStorage.setItem('optimizer_inventory', JSON.stringify(inventory));
-    }, [inventory]);
+    const [maximizeStats, setMaximizeStats] = useState(initialMax);
 
     function initializeBoard(currentTier: GridTier) {
         const grid = Array.from({ length: 5 }, () => Array.from({ length: 7 }, () => null as any));
@@ -231,9 +212,31 @@ export function useOptimizer() {
         return grid;
     }
 
+    const [board, setBoard] = useState<(InventoryItem | 'Locked' | null)[][]>(() => initializeBoard(initialTier));
+
+    const boardRef = useRef(board);
+    const setBoardSync = (newBoard: any) => {
+        boardRef.current = newBoard;
+        setBoard(newBoard);
+    };
+
+    const [bestTotals, setBestTotals] = useState<Stats>({ Performance: 0, Quality: 0, Efficiency: 0 });
+    const [bestPieceStats, setBestPieceStats] = useState<Map<string, Stats>>(new Map());
+
+    const [isSolving, setIsSolving] = useState(false);
+    const [warningMsg, setWarningMsg] = useState<string | null>(null);
+    const [solutionCode, setSolutionCode] = useState<string>('');
+    const isSolvingRef = useRef(false);
+
+    const getAvailableInventory = () => {
+        if (!getUsedItems || !machineId) return inventory;
+        const used = getUsedItems(machineId);
+        return inventory.filter(item => !used.has(item.id));
+    };
+
     const handleTierChange = (newTier: GridTier) => {
         setTier(newTier);
-        setBoard(initializeBoard(newTier));
+        setBoardSync(initializeBoard(newTier));
         setBestTotals({ Performance: 0, Quality: 0, Efficiency: 0 });
         setBestPieceStats(new Map());
         setWarningMsg(null);
@@ -245,7 +248,7 @@ export function useOptimizer() {
             isSolvingRef.current = false;
             setIsSolving(false);
         }
-        setBoard(initializeBoard(tier));
+        setBoardSync(initializeBoard(tier));
         setBestTotals({ Performance: 0, Quality: 0, Efficiency: 0 });
         setBestPieceStats(new Map());
 
@@ -255,60 +258,73 @@ export function useOptimizer() {
         setSolutionCode('');
     };
 
-    const manuallyPlaceItem = (item: InventoryItem, rootX: number, rootY: number, offsets: Point[]) => {
-        setBoard(prev => {
-            const next = prev.map(row => [...row]);
-            let swapItemIds = new Set<string>();
-
-            for (const pt of offsets) {
-                const px = rootX + pt.x;
-                const py = rootY + pt.y;
-                if (px >= 0 && px < 7 && py >= 0 && py < 5) {
-                    const cell = next[py][px];
-                    if (cell && cell !== 'Locked' && cell.id !== item.id) {
-                        if (cell.shape === item.shape) swapItemIds.add(cell.id);
-                    }
-                }
-            }
-
-            for (let y = 0; y < 5; y++) {
-                for (let x = 0; x < 7; x++) {
-                    const cell = next[y][x];
-                    if (cell && cell !== 'Locked') {
-                        if (cell.id === item.id || swapItemIds.has(cell.id)) {
-                            next[y][x] = null;
-                        }
-                    }
-                }
-            }
-
-            for (const pt of offsets) {
-                const px = rootX + pt.x;
-                const py = rootY + pt.y;
-                if (px >= 0 && px < 7 && py >= 0 && py < 5) {
-                    next[py][px] = item;
-                }
-            }
-            return next;
-        });
+    const stopOptimization = () => {
+        isSolvingRef.current = false;
+        setIsSolving(false);
     };
 
-    const manuallyRemoveItem = (itemId: string) => {
-        setBoard(prev => {
-            const next = prev.map(row => [...row]);
-            for (let y = 0; y < 5; y++) {
-                for (let x = 0; x < 7; x++) {
-                    const cell = next[y][x];
-                    if (cell && cell !== 'Locked' && cell.id === itemId) {
+    const manuallyPlaceItem = (item: InventoryItem, rootX: number, rootY: number, offsets: Point[]) => {
+        const next = boardRef.current.map(row => [...row]);
+        let swapItemIds = new Set<string>();
+
+        for (const pt of offsets) {
+            const px = rootX + pt.x;
+            const py = rootY + pt.y;
+            if (px >= 0 && px < 7 && py >= 0 && py < 5) {
+                const cell = next[py][px];
+                if (cell && cell !== 'Locked' && cell.id !== item.id) {
+                    if (cell.shape === item.shape) swapItemIds.add(cell.id);
+                }
+            }
+        }
+
+        for (let y = 0; y < 5; y++) {
+            for (let x = 0; x < 7; x++) {
+                const cell = next[y][x];
+                if (cell && cell !== 'Locked') {
+                    if (cell.id === item.id || swapItemIds.has(cell.id)) {
                         next[y][x] = null;
                     }
                 }
             }
-            return next;
-        });
+        }
+
+        for (const pt of offsets) {
+            const px = rootX + pt.x;
+            const py = rootY + pt.y;
+            if (px >= 0 && px < 7 && py >= 0 && py < 5) {
+                next[py][px] = item;
+            }
+        }
+        setBoardSync(next);
     };
 
-    const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | null)[][], currentInventory: InventoryItem[] = inventory) => {
+    const manuallyRemoveItem = (itemId: string) => {
+        const next = boardRef.current.map(row => [...row]);
+        for (let y = 0; y < 5; y++) {
+            for (let x = 0; x < 7; x++) {
+                const cell = next[y][x];
+                if (cell && cell !== 'Locked' && cell.id === itemId) {
+                    next[y][x] = null;
+                }
+            }
+        }
+        setBoardSync(next);
+    };
+
+    const isValidPlacement = (item: InventoryItem, rootX: number, rootY: number, offsets: Point[]) => {
+        for (const pt of offsets) {
+            const px = rootX + pt.x;
+            const py = rootY + pt.y;
+            if (px < 0 || px >= 7 || py < 0 || py >= 5) return false;
+            const cell = boardRef.current[py][px];
+            if (cell === 'Locked') return false;
+            if (cell && cell.id !== item.id) return false;
+        }
+        return true;
+    };
+
+    const calculateBoardStats = (currentBoard: (InventoryItem | 'Locked' | null)[][], currentInventory: InventoryItem[] = getAvailableInventory()) => {
         const totals: Stats = { Performance: 0, Quality: 0, Efficiency: 0 };
         const pieceStats = new Map<string, Stats>();
         let coveredNodeSides = 0;
@@ -577,7 +593,7 @@ export function useOptimizer() {
             }
 
             setInventory(newInventory);
-            setBoard(newBoard);
+            setBoardSync(newBoard);
             setSolutionCode(code);
             setWarningMsg(null);
 
@@ -593,7 +609,7 @@ export function useOptimizer() {
     useEffect(() => {
         if (!isSolvingRef.current) {
             let boardChanged = false;
-            const newBoard = board.map(row => row.map(cell => {
+            const newBoard = boardRef.current.map(row => row.map(cell => {
                 if (cell && cell !== 'Locked') {
                     const invMatch = inventory.find(i => i.id === cell.id);
                     if (invMatch && invMatch !== cell) {
@@ -604,19 +620,20 @@ export function useOptimizer() {
                 return cell;
             }));
 
-            const boardToCalculate = boardChanged ? newBoard : board;
+            const boardToCalculate = boardChanged ? newBoard : boardRef.current;
             const { totals, pieceStats } = calculateBoardStats(boardToCalculate);
 
             setBestTotals(totals);
             setBestPieceStats(new Map(pieceStats));
-            if (boardChanged) setBoard(newBoard);
+            if (boardChanged) setBoardSync(newBoard);
 
             if (inventory.length > 0) {
-                const newCode = generateCodeFromState(tier, maximizeStats, targetStats, inventory, boardToCalculate);
+                const availableForCode = getAvailableInventory();
+                const newCode = generateCodeFromState(tier, maximizeStats, targetStats, availableForCode, boardToCalculate);
                 setSolutionCode(newCode);
 
                 const timer = setTimeout(() => {
-                    saveToDatabase(tier, totals, newCode, inventory);
+                    saveToDatabase(tier, totals, newCode, availableForCode);
                 }, 60000);
 
                 return () => clearTimeout(timer);
@@ -624,7 +641,7 @@ export function useOptimizer() {
                 setSolutionCode('');
             }
         }
-    }, [inventory, board, tier, maximizeStats, targetStats]);
+    }, [inventory, tier, maximizeStats, targetStats, machineId, getUsedItems, board]);
 
     const runOptimization = async () => {
         if (isSolving) {
@@ -632,8 +649,10 @@ export function useOptimizer() {
             return;
         }
 
-        if (inventory.length === 0) {
-            setWarningMsg(`Cannot optimize: You have no modules selected.`);
+        const availableInventory = getAvailableInventory();
+
+        if (availableInventory.length === 0) {
+            setWarningMsg(`Cannot optimize: No unused modules available.`);
             return;
         }
 
@@ -641,7 +660,7 @@ export function useOptimizer() {
         let activeMax = { ...maximizeStats };
         let activeTar = { ...targetStats };
 
-        const hasAnyPositiveStats = inventory.some(item => {
+        const hasAnyPositiveStats = availableInventory.some(item => {
             const modified = applyInternalEffects(item);
             return roundStat(modified.Performance) > 0 || roundStat(modified.Quality) > 0 || roundStat(modified.Efficiency) > 0;
         });
@@ -649,7 +668,7 @@ export function useOptimizer() {
         if (!hasAnyPositiveStats) {
             setWarningMsg(`Selected modules have no stats. Optimizing for space/packing.`);
         } else {
-            const validForCurrentGoals = inventory.some(item => {
+            const validForCurrentGoals = availableInventory.some(item => {
                 const mod = applyInternalEffects(item);
                 return (activeMax.Performance && roundStat(mod.Performance) > 0) ||
                     (activeMax.Quality && roundStat(mod.Quality) > 0) ||
@@ -660,9 +679,9 @@ export function useOptimizer() {
             });
 
             if (!validForCurrentGoals) {
-                const redCount = inventory.filter(i => roundStat(applyInternalEffects(i).Performance) > 0).length;
-                const yellowCount = inventory.filter(i => roundStat(applyInternalEffects(i).Quality) > 0).length;
-                const greenCount = inventory.filter(i => roundStat(applyInternalEffects(i).Efficiency) > 0).length;
+                const redCount = availableInventory.filter(i => roundStat(applyInternalEffects(i).Performance) > 0).length;
+                const yellowCount = availableInventory.filter(i => roundStat(applyInternalEffects(i).Quality) > 0).length;
+                const greenCount = availableInventory.filter(i => roundStat(applyInternalEffects(i).Efficiency) > 0).length;
 
                 let autoGoal: keyof Stats = 'Performance';
                 if (redCount >= yellowCount && redCount >= greenCount && redCount > 0) autoGoal = 'Performance';
@@ -699,9 +718,9 @@ export function useOptimizer() {
         const isJunk = (p: InventoryItem) => p.displayName.includes('Junk Processing');
         const isBlast = (p: InventoryItem) => p.displayName.includes('Blast Module');
 
-        const targetAlarmCount = inventory.filter(isAlarm).length;
-        const targetJunkCount = inventory.some(isJunk) ? 1 : 0;
-        const targetBlastCount = inventory.some(isBlast) ? 1 : 0;
+        const targetAlarmCount = availableInventory.filter(isAlarm).length;
+        const targetJunkCount = availableInventory.some(isJunk) ? 1 : 0;
+        const targetBlastCount = availableInventory.some(isBlast) ? 1 : 0;
 
         const calculateFitness = (t: Stats, piecesCount: number, alarmsCount: number, junkCount: number, blastCount: number) => {
             let score = 0;
@@ -850,7 +869,26 @@ export function useOptimizer() {
         };
 
         while (isSolvingRef.current) {
+            const dynamicUsed = getUsedItems(machineId);
+
             let testBoard = currentBoardState.map(row => [...row]);
+            let isBoardEmpty = true;
+            const placedIds = new Set<string>();
+
+            for (let y = 0; y < 5; y++) {
+                for (let x = 0; x < 7; x++) {
+                    const cell = testBoard[y][x];
+                    if (cell && cell !== 'Locked') {
+                        if (dynamicUsed.has(cell.id)) {
+                            testBoard[y][x] = null;
+                        } else {
+                            placedIds.add(cell.id);
+                            isBoardEmpty = false;
+                        }
+                    }
+                }
+            }
+
             let itemsToPlace: InventoryItem[] = [];
             const mandatoryIds = new Set<string>();
 
@@ -858,15 +896,6 @@ export function useOptimizer() {
             const shouldMutate = localBestScore !== -Infinity && (isStagnant || Math.random() > 0.2);
 
             if (shouldMutate) {
-                const placedIds = new Set<string>();
-                for (let y = 0; y < 5; y++) {
-                    for (let x = 0; x < 7; x++) {
-                        const cell = testBoard[y][x];
-                        if (cell && cell !== 'Locked') placedIds.add(cell.id);
-                    }
-                }
-
-                const piecesToMutate: InventoryItem[] = [];
                 if (placedIds.size > 0) {
                     const idsArr = Array.from(placedIds).sort(() => Math.random() - 0.5);
 
@@ -886,12 +915,9 @@ export function useOptimizer() {
                                 if (cell && cell !== 'Locked' && cell.id === idToRemove) testBoard[y][x] = null;
                             }
                         }
-                        const pItem = inventory.find(inv => inv.id === idToRemove);
-                        if (pItem) piecesToMutate.push(pItem);
+                        placedIds.delete(idToRemove);
                     }
                 }
-                const unusedItems = inventory.filter(inv => !placedIds.has(inv.id));
-                const rawItemsToPlace = [...piecesToMutate, ...unusedItems];
 
                 let boardHasJunk = false;
                 let boardHasBlast = false;
@@ -902,6 +928,9 @@ export function useOptimizer() {
                         if (isBlast(p)) boardHasBlast = true;
                     }
                 });
+
+                const dynamicAvailableInventory = inventory.filter(inv => !dynamicUsed.has(inv.id));
+                const rawItemsToPlace = dynamicAvailableInventory.filter(inv => !placedIds.has(inv.id));
 
                 const mutationAlarms = rawItemsToPlace.filter(isAlarm);
                 const mutationJunks = rawItemsToPlace.filter(isJunk);
@@ -937,11 +966,14 @@ export function useOptimizer() {
 
             } else {
                 testBoard = initializeBoard(tier);
+                isBoardEmpty = true;
 
-                const alarms = inventory.filter(isAlarm);
-                const junks = inventory.filter(isJunk);
-                const blasts = inventory.filter(isBlast);
-                const others = inventory.filter(p => !isAlarm(p) && !isJunk(p) && !isBlast(p));
+                const dynamicAvailableInventory = inventory.filter(inv => !dynamicUsed.has(inv.id));
+
+                const alarms = dynamicAvailableInventory.filter(isAlarm);
+                const junks = dynamicAvailableInventory.filter(isJunk);
+                const blasts = dynamicAvailableInventory.filter(isBlast);
+                const others = dynamicAvailableInventory.filter(p => !isAlarm(p) && !isJunk(p) && !isBlast(p));
 
                 const mandatoryThisRound: InventoryItem[] = [...alarms];
                 const fillerThisRound: InventoryItem[] = [];
@@ -982,14 +1014,6 @@ export function useOptimizer() {
                 ];
             }
 
-            let isBoardEmpty = true;
-            for (let y = 0; y < 5; y++) {
-                for (let x = 0; x < 7; x++) {
-                    if (testBoard[y][x] && testBoard[y][x] !== 'Locked') { isBoardEmpty = false; break; }
-                }
-                if (!isBoardEmpty) break;
-            }
-
             for (const piece of itemsToPlace) {
                 const isFiller = (isJunk(piece) || isBlast(piece)) && !mandatoryIds.has(piece.id);
                 const orientations = PRECOMPUTED_OFFSETS.get(piece.shape) || [];
@@ -1018,7 +1042,7 @@ export function useOptimizer() {
                 }
             }
 
-            const { totals, pieceStats, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount } = calculateBoardStats(testBoard);
+            const { totals, pieceStats, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount } = calculateBoardStats(testBoard, inventory);
             const currentScore = calculateFitness(totals, placedPiecesCount, placedAlarmsCount, placedJunkCount, placedBlastCount);
 
             if (!isSolvingRef.current) break;
@@ -1030,7 +1054,10 @@ export function useOptimizer() {
                 localBestTotals = totals;
                 setBestTotals(totals);
                 setBestPieceStats(new Map(pieceStats));
-                setBoard(testBoard.map(row => [...row]));
+
+                const syncBoard = testBoard.map(row => [...row]);
+                setBoardSync(syncBoard);
+
                 stagnationCounter = 0;
             } else if (currentScore === localBestScore && Math.random() > 0.5) {
                 currentBoardState = testBoard.map(row => [...row]);
@@ -1044,20 +1071,23 @@ export function useOptimizer() {
 
         setIsSolving(false);
 
-        const generatedCode = generateCodeFromState(tier, activeMax, activeTar, inventory, bestVisualBoard);
+        const finalDynamicUsed = getUsedItems(machineId);
+        const finalAvailable = inventory.filter(inv => !finalDynamicUsed.has(inv.id));
+        const generatedCode = generateCodeFromState(tier, activeMax, activeTar, finalAvailable, bestVisualBoard);
         setSolutionCode(generatedCode);
-        saveToDatabase(tier, localBestTotals, generatedCode, inventory);
+        saveToDatabase(tier, localBestTotals, generatedCode, finalAvailable);
     };
 
     return {
         tier, setTier, handleTierChange,
         targetStats, setTargetStats,
         maximizeStats, setMaximizeStats,
-        inventory, setInventory,
         board, bestTotals, bestPieceStats,
-        isSolving, warningMsg, setWarningMsg,
+        isSolving, stopOptimization, warningMsg, setWarningMsg,
         solutionCode, setSolutionCode, importSolution,
         runOptimization, resetBoard,
-        manuallyPlaceItem, manuallyRemoveItem
+        manuallyPlaceItem, manuallyRemoveItem,
+        isValidPlacement,
+        boardRef
     };
 }
