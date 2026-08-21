@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import type {GridTier, InventoryItem, Stats, TargetStats, Point, ModuleShape, ModuleColor, ItemEffect} from '../types';
 import { getBaseStats, applyInternalEffects, PRECOMPUTED_OFFSETS } from '../utils';
@@ -679,7 +679,21 @@ export const runOptimizationEngine = async (
             const updates = new Map();
             for (let mIdx = 0; mIdx < machines.length; mIdx++) {
                 const m = machines[mIdx];
-                const finalCode = generateCodeFromState(m.tier, m.maximizeStats, m.targetStats, inventory, testBoards[mIdx]);
+
+                const placedOnOtherMachines = new Set<string>();
+                for (let otherIdx = 0; otherIdx < machines.length; otherIdx++) {
+                    if (otherIdx !== mIdx) {
+                        for (let y = 0; y < 5; y++) {
+                            for (let x = 0; x < 7; x++) {
+                                const cell = testBoards[otherIdx][y][x];
+                                if (cell && cell !== 'Locked') placedOnOtherMachines.add(cell.id);
+                            }
+                        }
+                    }
+                }
+                const inventoryForCode = inventory.filter(item => !placedOnOtherMachines.has(item.id));
+
+                const finalCode = generateCodeFromState(m.tier, m.maximizeStats, m.targetStats, inventoryForCode, testBoards[mIdx]);
                 updates.set(m.id, {
                     board: testBoards[mIdx].map(row => [...row]),
                     totals: machineTotals[mIdx],
@@ -864,10 +878,14 @@ export function useOptimizer(
                 const reconstructedValues: [number, number] = [maxBaseValue * 2, maxBaseValue * 2];
 
                 for (let eIdx = 0; eIdx < 2; eIdx++) {
-                    if (reader.read(1) === 1) {
-                        const eff = EFFECT_MAP[reader.read(4)];
+                    const hasEffect = reader.read(1) === 1;
+                    if (hasEffect) {
+                        const effIdx = reader.read(4);
+                        const eff = EFFECT_MAP[effIdx];
                         reconstructedEffects[eIdx] = eff;
-                        if ((eff === 'Learning Algorithm' || eff === 'Degrading') && reader.read(1) === 1) {
+
+                        const hasValue = reader.read(1) === 1;
+                        if ((eff === 'Learning Algorithm' || eff === 'Degrading') && hasValue) {
                             reconstructedValues[eIdx] = reader.read(12) - 2048;
                         }
                     }
