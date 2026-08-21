@@ -137,6 +137,7 @@ const MachineInstance = React.memo(forwardRef(({
                                                }: any, ref) => {
     const optimizer = useOptimizer(inventory, setInventory, machineId, getUsedItems, initialTier, initialMax, initialTarget || { Performance: null, Quality: null, Efficiency: null });
     const [localHover, setLocalHover] = useState<{x: number, y: number} | null>(null);
+    const [machineType, setMachineType] = useState('Select Machine...');
 
     useImperativeHandle(ref, () => ({
         run: optimizer.runOptimization,
@@ -424,6 +425,32 @@ const MachineInstance = React.memo(forwardRef(({
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', boxSizing: 'border-box' }}>
+
+                <select
+                    value={machineType}
+                    onChange={(e) => setMachineType(e.target.value)}
+                    disabled={optimizer.isSolving || isAnySolving}
+                    style={{
+                        width: '100%',
+                        padding: '6px 8px',
+                        backgroundColor: '#222',
+                        color: '#eee',
+                        border: '1px solid #333',
+                        borderRadius: '6px',
+                        fontSize: '0.85em',
+                        outline: 'none',
+                        cursor: (optimizer.isSolving || isAnySolving) ? 'not-allowed' : 'pointer'
+                    }}
+                >
+                    <option value="Select Machine..." disabled>Select Machine...</option>
+                    <option value="Moisture Farm">Moisture Farm</option>
+                    <option value="Furnace">Furnace</option>
+                    <option value="Water Purifier">Water Purifier</option>
+                    <option value="Alarm System">Alarm System</option>
+                    <option value="AgeWell">AgeWell</option>
+                    <option value="Cryptographic Desequencer">Cryptographic Desequencer</option>
+                    <option value="Mirage Projector">Mirage Projector</option>
+                </select>
 
                 <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <div style={{ display: 'flex', gap: '5px', backgroundColor: '#222', padding: '5px', borderRadius: '6px' }}>
