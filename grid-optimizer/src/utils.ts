@@ -89,9 +89,9 @@ export const applyInternalEffects = (item: InventoryItem): Stats => {
             e *= 2.0;
         }
         else if (effect === 'Negative Feedback') {
-            if (p > 0) p *= 1.25;
-            if (q > 0) q *= 1.25;
-            if (e > 0) e *= 1.25;
+            p *= 1.25;
+            q *= 1.25;
+            e *= 1.25;
         }
     });
 
