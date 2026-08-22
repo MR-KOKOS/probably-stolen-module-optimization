@@ -108,6 +108,10 @@ export const getEffectiveBaseStats = (item: InventoryItem): Stats => computeItem
 
 export const applyInternalEffects = (item: InventoryItem): Stats => computeItemStats(item).internal;
 
+// fix for floating-point multiplication
+const STAT_EPSILON = 1e-9;
+export const roundStat = (val: number) => val < 0 ? Math.ceil(val - STAT_EPSILON) : Math.floor(val + STAT_EPSILON);
+
 export const formatStatValue = (val: number) => {
     const rounded = Math.trunc(val);
     return rounded > 0 ? `+${rounded}%` : `${rounded}%`;
