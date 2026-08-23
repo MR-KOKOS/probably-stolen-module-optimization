@@ -6,6 +6,8 @@ export type ModuleShape =
 
 export type FilterGroup = 'All' | 'Performance' | 'Quality' | 'Efficiency' | 'Special';
 export type ItemEffect = 'None' | 'Premium' | 'Inferior' | 'Overcharged' | 'Degrading' | 'Negative Feedback' | 'Receiver' | 'Side Mount' | 'Top Mount' | 'Learning Algorithm';
+export type MachineMode = 'optimize' | 'donate' | 'ignore';
+export type FurnaceModules = 'none' | 'junk' | 'blast' | 'both';
 
 export interface InventoryItem {
     id: string;
@@ -15,6 +17,16 @@ export interface InventoryItem {
     effects: [ItemEffect, ItemEffect];
     effectValues: [number, number];
     isInfinite?: boolean;
+    moduleType?: string;
+    optimizable?: boolean;
+    source?: {
+        uuid: number;
+        location: string;
+        parentId: string | null;
+        machineId?: string;
+        x: number;
+        y: number;
+    };
 }
 
 export interface ModuleTemplate {
