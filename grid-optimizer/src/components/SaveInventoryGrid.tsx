@@ -125,7 +125,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
     recycleReasons: Map<string, string>;
     moduleDestinations: Map<string, string>;
     moduleAssignments: Record<string, string>;
-    assignmentMachines: { id: string; name: string; enabled: boolean }[];
+    assignmentMachines: { id: string; name: string }[];
     onModuleDragStart: (event: ReactMouseEvent, module: InventoryItem, offsets: { x: number; y: number }[]) => void;
     locatedModule: InventoryItem | null;
     guideModuleId?: string;
@@ -217,6 +217,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
             <div style={{ color: '#888', fontSize: '0.75em', margin: '-6px 0 12px' }}>
                 Tip: Click a module inside a machine to highlight its location in Shop Inventory.
                 <div style={{ color: '#8ab4f8', marginTop: '3px' }}>After optimizing, assigned modules show a blue destination badge, such as MF#1 for Moisture Farm #1.</div>
+                <div style={{ color: '#ff5cdb', marginTop: '3px' }}>Click a module in Save Inventory to permanently assign it to a machine. Pink badges mark fixed assignments.</div>
                 {recycleReasons.size > 0 && <div style={{ color: '#a97852', marginTop: '3px' }}>Run the optimizer before removing modules. Brown modules may be worth selling or exchanging. Ruined modules can be sold or dismantled. Hover for details.</div>}
             </div>
             {selectedModule && <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '-4px 0 12px', color: '#ccc', fontSize: '0.85em' }}>
@@ -229,7 +230,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                 >
                     <option value="">Anywhere</option>
                     <option value="__reserved__">Keep out of optimization</option>
-                    {assignmentMachines.map(machine => <option key={machine.id} value={machine.id} disabled={!machine.enabled}>{machine.name}{machine.enabled ? '' : ' (not optimizing)'}</option>)}
+                    {assignmentMachines.map(machine => <option key={machine.id} value={machine.id}>{machine.name}</option>)}
                 </select>
             </label>}
             <div ref={panelsRef} style={{
@@ -302,9 +303,12 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                         const module = item.moduleId ? moduleById.get(item.moduleId) : undefined;
                         const recycleReason = module && !container.machine ? recycleReasons.get(module.id) : undefined;
                         const destination = module ? moduleDestinations.get(module.id) : undefined;
+                        const assignment = module ? moduleAssignments[module.id] : undefined;
+                        const assignmentName = assignment === '__reserved__' ? 'OUT' : assignmentMachines.find(machine => machine.id === assignment)?.name;
                         const itemLabel = item.name.replace(/([a-z])([A-Z])/g, '$1 $2');
                         const labelText = module ? getModuleLabel(module.displayName) : itemLabel;
-                        const showDestination = destination && labelText !== 'Node';
+                        const badge = assignmentName || destination;
+                        const showDestination = badge && labelText !== 'Node';
                         const targetHighlighted = Boolean(item.container && containsTargetContainer(item.id));
                         const highlighted = targetHighlighted || Boolean((item.moduleId && (item.moduleId === locatedModule?.id || item.moduleId === guideModuleId)) || containsLocatedModule(item.id));
                         const highlightColor = targetHighlighted ? '#57e389' : '#00ffff';
@@ -381,8 +385,8 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                                     overflow: 'hidden',
                                     borderRadius: '3px',
                                     padding: '0 4px',
-                                    border: '1px solid #7ec8ff',
-                                    backgroundColor: '#075b9b',
+                                    border: `1px solid ${assignmentName ? '#ff8ae8' : '#7ec8ff'}`,
+                                    backgroundColor: assignmentName ? '#a00078' : '#075b9b',
                                     color: '#fff',
                                     boxShadow: '0 1px 3px rgba(0, 0, 0, 0.8)',
                                     fontSize: '11px',
@@ -391,7 +395,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                                     textAlign: 'center',
                                     whiteSpace: 'nowrap',
                                     pointerEvents: 'none'
-                                }}>{getMachineAbbreviation(destination)}</span>}
+                                }}>{assignmentName === 'OUT' ? assignmentName : getMachineAbbreviation(badge)}</span>}
                             </button>
                         );
                         })}

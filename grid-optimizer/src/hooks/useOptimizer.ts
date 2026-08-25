@@ -177,7 +177,8 @@ export function useOptimizer(
     initialBoard?: (InventoryItem | 'Locked' | null)[][],
     moduleType?: string,
     furnaceModules: FurnaceModules = 'none',
-    alarmModule = false
+    alarmModule = false,
+    optimizationTimeMs = 1500
 ) {
     const [tier, setTier] = useState<GridTier>(initialTier);
     const [targetStats, setTargetStats] = useState<TargetStats>(initialTarget);
@@ -421,7 +422,7 @@ export function useOptimizer(
                     setBestPieceStats(myUpdate.pieceStats);
                     setSolutionCode(generateCodeFromState(tier, maximizeStats, targetStats, inventoryForCode(availableInventory, myUpdate.board), myUpdate.board));
                 }
-            });
+            }, optimizationTimeMs);
         } catch (error) {
             setWarningMsg(error instanceof Error ? error.message : 'Optimization failed.');
         } finally {

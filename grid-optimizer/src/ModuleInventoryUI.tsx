@@ -10,7 +10,7 @@ import { importEs3Save } from './saveImport';
 import type { ImportedInventoryGrid } from './saveImport';
 import MiniShape from './components/MiniShape';
 import SaveInventoryGrid from './components/SaveInventoryGrid';
-import { getModuleLabel, getModuleLabelArea, hasStrongerSameShape } from './moduleRules';
+import { getMachineAbbreviation, getModuleLabel, getModuleLabelArea, hasStrongerSameShape } from './moduleRules';
 import { buildMovePlan, reconcileMoveTargets } from './movePlan';
 import type { MovePlacement, MoveStep } from './movePlan';
 
@@ -107,8 +107,13 @@ type MachineInstanceProps = {
     onSolvingChange: (id: string, solving: boolean) => void;
     onDragTargetRefChange: (target: DragTarget | null) => void;
     onLocateModule: (id: string) => void;
+    onOptimizeMachine: (id: string) => void;
+    onClearMachine: (id: string) => void;
+    moduleAssignments: Record<string, string>;
+    assignmentMachines: { id: string; name: string }[];
     isAnySolving: boolean;
     canDelete: boolean;
+    optimizationSeconds: number;
 };
 
 const DEFAULT_SAVE_FOLDER = String.raw`%USERPROFILE%\AppData\LocalLow\Questing Goose Studio\Probably Stolen`;
@@ -318,13 +323,18 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
                                                    onSolvingChange,
                                                    onDragTargetRefChange,
                                                    onLocateModule,
+                                                   onOptimizeMachine,
+                                                   onClearMachine,
+                                                   moduleAssignments,
+                                                   assignmentMachines,
                                                    isAnySolving,
-                                                   canDelete
+                                                   canDelete,
+                                                   optimizationSeconds
                                                }, ref) => {
     const [machineType, setMachineType] = useState('Select Machine...');
     const effectiveModuleType = machineModuleType || (machineType === 'Furnace' ? 'MODULE_TYPE_FURNACE' : machineType === 'Alarm System' ? 'MODULE_TYPE_ALARM' : undefined);
     const displayedMachineLocation = machineLocation?.replace(/^Shop Inventory\s*→\s*/, '');
-    const optimizer = useOptimizer(inventory, setInventory, machineId, getUsedItems, initialTier, initialMax, initialTarget || { Performance: null, Quality: null, Efficiency: null }, initialPriority, initialBoard, effectiveModuleType, furnaceModules, alarmModule);
+    const optimizer = useOptimizer(inventory, setInventory, machineId, getUsedItems, initialTier, initialMax, initialTarget || { Performance: null, Quality: null, Efficiency: null }, initialPriority, initialBoard, effectiveModuleType, furnaceModules, alarmModule, optimizationSeconds === 0 ? Number.POSITIVE_INFINITY : optimizationSeconds * 1000);
     const [localHover, setLocalHover] = useState<(Point & { dragStartX: number; dragStartY: number }) | null>(null);
     const canOptimize = mode === 'optimize';
 
@@ -633,6 +643,9 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
                         const labelFootprint = showModuleLabel ? getBoardFootprint(cell.id) : null;
                         const labelArea = labelFootprint ? getModuleLabelArea(labelFootprint.offsets) : null;
                         const verticalLabel = Boolean(labelArea && labelArea.height > labelArea.width);
+                        const assignmentTarget = showModuleLabel ? moduleAssignments[cell.id] : undefined;
+                        const assignmentName = assignmentTarget === RESERVED_ASSIGNMENT ? 'OUT' : assignmentMachines.find(machine => machine.id === assignmentTarget)?.name;
+                        const assignmentBadge = assignmentName && cell && cell !== 'Locked' && getModuleLabel(cell.displayName) !== 'Node' ? (assignmentName === 'OUT' ? assignmentName : getMachineAbbreviation(assignmentName)) : undefined;
 
                         return (
                             <div
@@ -712,7 +725,7 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
                                         left: `${(labelFootprint!.minX + labelArea!.x - x) * cellSize + 2}px`,
                                         top: `${(labelFootprint!.minY + labelArea!.y - y) * cellSize + 2}px`,
                                         width: `${labelArea!.width * cellSize - 4}px`,
-                                        height: `${labelArea!.height * cellSize - 4}px`,
+                                        height: `${labelArea!.height * cellSize - 4 - (assignmentBadge ? 15 : 0)}px`,
                                         zIndex: 2,
                                         display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
                                         color: '#fff', fontSize: `${Math.max(12, cellSize * 0.48)}px`, fontWeight: 'bold', lineHeight: 1,
@@ -722,6 +735,27 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
                                         {getModuleLabel(cell.displayName)}
                                     </span>
                                 )}
+                                {showModuleLabel && assignmentBadge && <span style={{
+                                    position: 'absolute',
+                                    left: `${(labelFootprint!.minX + labelArea!.x - x + labelArea!.width / 2) * cellSize}px`,
+                                    top: `${(labelFootprint!.minY + labelArea!.y - y + labelArea!.height) * cellSize - 18}px`,
+                                    transform: 'translateX(-50%)',
+                                    zIndex: 3,
+                                    width: 'max-content',
+                                    maxWidth: `${labelArea!.width * cellSize - 4}px`,
+                                    height: '14px',
+                                    overflow: 'hidden',
+                                    padding: '0 3px',
+                                    border: '1px solid #ff8ae8',
+                                    borderRadius: '3px',
+                                    backgroundColor: '#a00078',
+                                    color: '#fff',
+                                    fontSize: '10px',
+                                    fontWeight: 800,
+                                    lineHeight: '12px',
+                                    whiteSpace: 'nowrap',
+                                    pointerEvents: 'none'
+                                }}>{assignmentBadge}</span>}
                                 {isPreviewCell && (
                                     <div style={{
                                         position: 'absolute', inset: 0,
@@ -823,26 +857,44 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
                     </button>
                 </div>}
 
-                {!imported && <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', width: '100%' }}>
+                {imported && <div style={{ display: 'flex', gap: '5px', width: '100%' }}>
+                    <button
+                        onClick={() => onOptimizeMachine(machineId)}
+                        disabled={optimizer.isSolving || isAnySolving || inventory.length === 0}
+                        style={{ flex: 2, padding: '8px', fontSize: '0.85em', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: (optimizer.isSolving || isAnySolving || inventory.length === 0) ? 'not-allowed' : 'pointer', opacity: (optimizer.isSolving || isAnySolving || inventory.length === 0) ? 0.5 : 1 }}
+                    >
+                        Optimize Machine
+                    </button>
+                    <button
+                        onClick={() => onClearMachine(machineId)}
+                        disabled={optimizer.isSolving || isAnySolving}
+                        style={{ flex: 1, padding: '8px', fontSize: '0.85em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '6px', cursor: (optimizer.isSolving || isAnySolving) ? 'not-allowed' : 'pointer' }}
+                    >
+                        Clear
+                    </button>
+                </div>}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', width: '100%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <span style={{ fontSize: '0.75em', color: '#888' }}>Code:</span>
                         <input
                             type="text"
                             value={optimizer.solutionCode}
                             onChange={(e) => optimizer.setSolutionCode(e.target.value)}
+                            readOnly={imported}
                             placeholder="Solution code..."
                             disabled={optimizer.isSolving || isAnySolving}
                             style={{ flex: 1, minWidth: 0, padding: '6px', fontSize: '0.75em', backgroundColor: '#111', color: '#eee', border: '1px solid #444', borderRadius: '4px' }}
                         />
                     </div>
                     <div style={{ display: 'flex', gap: '5px', width: '100%' }}>
-                        <button
+                        {!imported && <button
                             onClick={() => optimizer.importSolution(optimizer.solutionCode)}
-                            disabled={imported || !optimizer.solutionCode || optimizer.isSolving || isAnySolving}
+                            disabled={!optimizer.solutionCode || optimizer.isSolving || isAnySolving}
                             style={{ flex: 1, padding: '6px', fontSize: '0.8em', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: (!optimizer.solutionCode || optimizer.isSolving || isAnySolving) ? 'not-allowed' : 'pointer' }}
                         >
                             Import
-                        </button>
+                        </button>}
                         <button
                             onClick={() => navigator.clipboard.writeText(optimizer.solutionCode)}
                             disabled={!optimizer.solutionCode}
@@ -851,7 +903,7 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
                             Copy
                         </button>
                     </div>
-                </div>}
+                </div>
 
             </div>
         </div>
@@ -1126,6 +1178,9 @@ export default function ModuleInventoryUI() {
                                 }
                             });
                             machine.place(currentDrag.item, targetX, targetY, currentDrag.offsets);
+                            if (importedFile && currentDrag.sourceMachineId !== currentTarget.machineId && inventory.some(item => item.id === currentDrag.item.id)) {
+                                handleModuleAssignmentChange(currentDrag.item.id, currentTarget.machineId);
+                            }
                         }
                     }
                 }
@@ -1222,7 +1277,7 @@ export default function ModuleInventoryUI() {
             window.removeEventListener('mouseup', handleMouseUp);
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [dragState]);
+    }, [dragState, handleModuleAssignmentChange, importedFile, inventory]);
 
     const addPieceToInventory = (template: ModuleTemplate) => {
         const base = getBaseStats(template);
@@ -1384,7 +1439,7 @@ export default function ModuleInventoryUI() {
         return [...current.values()];
     };
 
-    const handleRunAll = () => {
+    const handleRunAll = (onlyMachineId?: string) => {
         if (isAnySolving || globalIsSolvingRef.current) {
             globalIsSolvingRef.current = false;
             Object.values(machinesRef.current).forEach(machine => machine.stop());
@@ -1394,18 +1449,12 @@ export default function ModuleInventoryUI() {
             setMovePlan(null);
             setMoveStepIndex(0);
             globalIsSolvingRef.current = true;
-            const activeMachines = Object.entries(machinesRef.current).filter(([, machine]) => machine.getState().mode === 'optimize');
+            if (onlyMachineId) setMachines(current => current.map(machine => machine.id === onlyMachineId ? { ...machine, mode: 'optimize' } : machine.mode === 'optimize' ? { ...machine, mode: 'ignore' } : machine));
+            const effectiveMode = (id: string, machine: MachineHandle) => onlyMachineId ? id === onlyMachineId ? 'optimize' : machine.getState().mode === 'optimize' ? 'ignore' : machine.getState().mode : machine.getState().mode;
+            const activeMachines = Object.entries(machinesRef.current).filter(([id, machine]) => effectiveMode(id, machine) === 'optimize');
             if (activeMachines.length === 0) { globalIsSolvingRef.current = false; return; }
             const activeIds = new Set(activeMachines.map(([id]) => id));
             const fixedAssignments = new Set(Object.entries(moduleAssignments).flatMap(([moduleId, target]) => activeIds.has(target) ? [moduleId] : []));
-            const invalidAssignment = Object.entries(moduleAssignments).find(([, target]) => target !== RESERVED_ASSIGNMENT && !activeIds.has(target));
-            if (invalidAssignment) {
-                const module = inventory.find(item => item.id === invalidAssignment[0]);
-                setImportError(`${module?.displayName || 'A required module'} is assigned to a machine that is not set to Optimize.`);
-                globalIsSolvingRef.current = false;
-                return;
-            }
-
             activeMachines.forEach(([id]) => handleSolvingChange(id, true));
 
             const machinesConfig = activeMachines.map(([id, m]) => {
@@ -1419,13 +1468,13 @@ export default function ModuleInventoryUI() {
 
             const initialBoards = activeMachines.map(([, machine]) => machine.getBoard());
             const reserved = new Set<string>();
-            Object.values(machinesRef.current).forEach(machine => {
-                if (machine.getState().mode !== 'ignore') return;
+            Object.entries(machinesRef.current).forEach(([id, machine]) => {
+                if (effectiveMode(id, machine) !== 'ignore') return;
                 machine.getBoard().flat().forEach(cell => {
                     if (cell && cell !== 'Locked') reserved.add(cell.id);
                 });
             });
-            const unavailableRequired = Object.entries(moduleAssignments).find(([moduleId, target]) => target !== RESERVED_ASSIGNMENT && reserved.has(moduleId));
+            const unavailableRequired = Object.entries(moduleAssignments).find(([moduleId, target]) => activeIds.has(target) && reserved.has(moduleId));
             if (unavailableRequired) {
                 const module = inventory.find(item => item.id === unavailableRequired[0]);
                 setImportError(`${module?.displayName || 'A required module'} is inside an ignored machine. Set that machine to Donate or Optimize.`);
@@ -1433,7 +1482,7 @@ export default function ModuleInventoryUI() {
                 activeMachines.forEach(([id]) => handleSolvingChange(id, false));
                 return;
             }
-            const keptOut = new Set(Object.entries(moduleAssignments).flatMap(([moduleId, target]) => target === RESERVED_ASSIGNMENT ? [moduleId] : []));
+            const keptOut = new Set(Object.entries(moduleAssignments).flatMap(([moduleId, target]) => target === RESERVED_ASSIGNMENT || !activeIds.has(target) ? [moduleId] : []));
 
             let optimizationSucceeded = false;
             runOptimizationWorker(
@@ -1447,8 +1496,8 @@ export default function ModuleInventoryUI() {
                         machinesRef.current[mId]?.applyUpdate(update.board, update.totals, update.pieceStats, update.code);
                         update.board.flat().forEach(cell => { if (cell && cell !== 'Locked') used.add(cell.id); });
                     });
-                    Object.values(machinesRef.current).forEach(machine => {
-                        if (machine.getState().mode === 'donate') used.forEach(id => machine.remove(id));
+                    Object.entries(machinesRef.current).forEach(([id, machine]) => {
+                        if (effectiveMode(id, machine) === 'donate') used.forEach(moduleId => machine.remove(moduleId));
                     });
                 },
                 optimizationSeconds === 0 ? Number.POSITIVE_INFINITY : optimizationSeconds * 1000
@@ -1480,8 +1529,8 @@ export default function ModuleInventoryUI() {
                             if (cell && cell !== 'Locked') destinations.set(cell.id, machineNames.get(id) || 'Machine');
                         });
                     });
-                    Object.values(machinesRef.current).forEach(machine => {
-                        if (machine.getState().mode === 'donate') return;
+                    Object.entries(machinesRef.current).forEach(([id, machine]) => {
+                        if (effectiveMode(id, machine) === 'donate') return;
                         machine.getBoard().flat().forEach(cell => {
                             if (cell && cell !== 'Locked') used.add(cell.id);
                         });
@@ -1547,9 +1596,16 @@ export default function ModuleInventoryUI() {
         setLocatedModuleId(null);
     };
 
-    const handleClearAll = () => {
+    const handleClearMachine = useCallback((machineId: string) => {
+        machinesRef.current[machineId]?.clear();
+        setUnusedAfterOptimization(null);
+        setModuleDestinations(new Map());
+        setMovePlan(null);
+    }, []);
+
+    const handleClearAll = (includeIgnored = false) => {
         Object.values(machinesRef.current).forEach(machine => {
-            if (machine.getState().mode !== 'ignore') machine.clear();
+            if (includeIgnored || machine.getState().mode !== 'ignore') machine.clear();
         });
         setUnusedAfterOptimization(null);
         setModuleDestinations(new Map());
@@ -1589,6 +1645,7 @@ export default function ModuleInventoryUI() {
     }, []);
 
     const handleSolvingChange = useCallback((id: string, solving: boolean) => {
+        if (!solving && globalIsSolvingRef.current) return;
         setSolvingStates(prev => {
             if (prev[id] === solving) return prev;
             return { ...prev, [id]: solving };
@@ -1598,6 +1655,7 @@ export default function ModuleInventoryUI() {
     const cellSize = machines.length <= 2 ? 50 : (machines.length <= 4 ? 40 : 35);
     const currentMove = movePlan?.[moveStepIndex];
     const currentMoveModule = currentMove ? inventory.find(module => module.id === currentMove.moduleId) : undefined;
+    const assignmentMachines = useMemo(() => machines.map(machine => ({ id: machine.id, name: machine.name || 'Machine' })), [machines]);
     const visibleLocatedModule = locatedModule && (!currentMove || currentMove.fromId === locatedModule.source?.machineId || currentMove.fromId === locatedModule.source?.parentId)
         ? locatedModule
         : null;
@@ -1895,8 +1953,13 @@ export default function ModuleInventoryUI() {
                         onSolvingChange={handleSolvingChange}
                         onDragTargetRefChange={setDragTargetRefChange}
                         onLocateModule={setLocatedModuleId}
+                        onOptimizeMachine={handleRunAll}
+                        onClearMachine={handleClearMachine}
+                        moduleAssignments={moduleAssignments}
+                        assignmentMachines={assignmentMachines}
                         isAnySolving={isAnySolving || Boolean(movePlan)}
                         canDelete={!m.imported && machines.length > 1}
+                        optimizationSeconds={optimizationSeconds}
                     />
                 ))}
             </div>
@@ -1917,7 +1980,7 @@ export default function ModuleInventoryUI() {
                     />
                 </label>
                 <button
-                    onClick={handleRunAll}
+                    onClick={() => handleRunAll()}
                     disabled={Boolean(movePlan) || ((inventory.length === 0 || !machines.some(machine => machine.mode === 'optimize')) && !isAnySolving)}
                     style={{
                         padding: '10px 24px',
@@ -1933,16 +1996,14 @@ export default function ModuleInventoryUI() {
                 >
                     {isAnySolving ? 'Stop Selected Optimizers' : 'Optimize Selected Machines'}
                 </button>
-                {importedFile && (
-                    <button
-                        onClick={handleClearAll}
+                <button
+                        onClick={() => handleClearAll(!importedFile)}
                         disabled={isAnySolving || Boolean(movePlan)}
-                        title="Clear displayed Optimize and Donate boards without changing the game save or machine settings"
+                        title={importedFile ? 'Clear displayed Optimize and Donate boards without changing the game save or machine settings' : 'Clear every machine board'}
                         style={{ padding: '10px 18px', backgroundColor: '#444', color: '#eee', border: '1px solid #666', borderRadius: '6px', cursor: isAnySolving || movePlan ? 'not-allowed' : 'pointer', opacity: isAnySolving || movePlan ? 0.5 : 1, fontWeight: 'bold' }}
                     >
-                        Clean Machines
+                        {importedFile ? 'Clean Machines' : 'Clear All'}
                     </button>
-                )}
                 {importedFile && (
                     <button
                         onClick={movePlan ? () => { setMovePlan(null); setLocatedModuleId(null); } : handleCreateMovePlan}
@@ -2010,7 +2071,7 @@ export default function ModuleInventoryUI() {
                 recycleReasons={recycleReasons}
                 moduleDestinations={moduleDestinations}
                 moduleAssignments={moduleAssignments}
-                assignmentMachines={machines.map(machine => ({ id: machine.id, name: machine.name || 'Machine', enabled: machine.mode === 'optimize' }))}
+                assignmentMachines={assignmentMachines}
                 onModuleDragStart={(event, module, offsets) => handleInventoryDragStart(event, module, offsets)}
                 locatedModule={visibleLocatedModule}
                 guideModuleId={currentMove?.moduleId}
@@ -2100,7 +2161,7 @@ export default function ModuleInventoryUI() {
                             <button
                                 onClick={() => {
                                     setInventory([]);
-                                    handleClearAll();
+                                    handleClearAll(true);
                                 }}
                                 disabled={isAnySolving || inventory.length === 0}
                                 style={{
