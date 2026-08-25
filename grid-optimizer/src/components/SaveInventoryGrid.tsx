@@ -4,7 +4,8 @@ import type { InventoryItem } from '../types';
 import { inferMachinePanes } from '../saveImport';
 import type { ImportedGridItem, ImportedInventoryGrid } from '../saveImport';
 import { COLOR_MAP } from '../constants';
-import { getMachineAbbreviation, getModuleLabel, getModuleLabelArea } from '../moduleRules';
+import { getMachineAbbreviation, getModuleLabel, getModuleLabelArea, isModuleAllowedForMachine } from '../moduleRules';
+import type { FurnaceModules } from '../types';
 import type { MoveStep } from '../movePlan';
 
 const CELL = 40;
@@ -125,7 +126,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
     recycleReasons: Map<string, string>;
     moduleDestinations: Map<string, string>;
     moduleAssignments: Record<string, string>;
-    assignmentMachines: { id: string; name: string }[];
+    assignmentMachines: { id: string; name: string; moduleType?: string; furnaceModules?: FurnaceModules; alarmModule?: boolean }[];
     onModuleDragStart: (event: ReactMouseEvent, module: InventoryItem, offsets: { x: number; y: number }[]) => void;
     locatedModule: InventoryItem | null;
     guideModuleId?: string;
@@ -141,19 +142,35 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
 }) {
     const byId = useMemo(() => new Map(grid.items.map(item => [item.id, item])), [grid]);
     const [navigation, setNavigation] = useState({ grid, id: grid.rootId });
-    const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
+    const [assignmentPopover, setAssignmentPopover] = useState<{ moduleId: string; x: number; y: number } | null>(null);
+    const pointerStartRef = useRef<{ moduleId: string; x: number; y: number } | null>(null);
     const selectedId = navigation.grid === grid ? navigation.id : grid.rootId;
     const guideContainerId = guideLocationId?.replace(/^save_machine_/, '');
     const currentId = guideContainerId && byId.has(guideContainerId) ? guideContainerId : selectedId;
-    const setCurrentId = (id: string) => setNavigation({ grid, id });
+    const setCurrentId = (id: string) => { setAssignmentPopover(null); setNavigation({ grid, id }); };
     const panelsRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         panelsRef.current?.scrollTo({ left: panelsRef.current.scrollWidth, behavior: 'smooth' });
     }, [currentId]);
     const moduleById = new Map(modules.map(module => [module.id, module]));
-    const selectedModule = selectedModuleId ? moduleById.get(selectedModuleId) : undefined;
+    const selectedModule = assignmentPopover ? moduleById.get(assignmentPopover.moduleId) : undefined;
     const originalModuleItems = new Map(grid.items.flatMap(item => item.moduleId ? [[item.moduleId, item] as const] : []));
     const virtualMoves = new Map(completedMoves.map(move => [move.moduleId, move]));
+
+    useEffect(() => {
+        if (navigationLocked) {
+            // Closing transient UI when another operation takes control is the synchronization this effect performs.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setAssignmentPopover(null);
+        }
+    }, [navigationLocked]);
+
+    useEffect(() => {
+        if (!assignmentPopover) return;
+        const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setAssignmentPopover(null); };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    }, [assignmentPopover]);
 
     const path: ImportedGridItem[] = [];
     let cursor = byId.get(currentId);
@@ -217,22 +234,9 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
             <div style={{ color: '#888', fontSize: '0.75em', margin: '-6px 0 12px' }}>
                 Tip: Click a module inside a machine to highlight its location in Shop Inventory.
                 <div style={{ color: '#8ab4f8', marginTop: '3px' }}>After optimizing, assigned modules show a blue destination badge, such as MF#1 for Moisture Farm #1.</div>
-                <div style={{ color: '#ff5cdb', marginTop: '3px' }}>Click a module in Save Inventory to permanently assign it to a machine. Pink badges mark fixed assignments.</div>
+                <div style={{ color: '#ff5cdb', marginTop: '3px' }}>Two ways to assign a module: click it and choose a machine, or drag it into a machine. Pink badges mark permanent assignments.</div>
                 {recycleReasons.size > 0 && <div style={{ color: '#a97852', marginTop: '3px' }}>Run the optimizer before removing modules. Brown modules may be worth selling or exchanging. Ruined modules can be sold or dismantled. Hover for details.</div>}
             </div>
-            {selectedModule && <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '-4px 0 12px', color: '#ccc', fontSize: '0.85em' }}>
-                Use <strong>{selectedModule.displayName}</strong>:
-                <select
-                    value={moduleAssignments[selectedModule.id] || ''}
-                    disabled={navigationLocked}
-                    onChange={event => onModuleAssignmentChange(selectedModule.id, event.target.value)}
-                    style={{ padding: '5px 8px', backgroundColor: '#292929', color: '#eee', border: '1px solid #555', borderRadius: '4px' }}
-                >
-                    <option value="">Anywhere</option>
-                    <option value="__reserved__">Keep out of optimization</option>
-                    {assignmentMachines.map(machine => <option key={machine.id} value={machine.id}>{machine.name}</option>)}
-                </select>
-            </label>}
             <div ref={panelsRef} style={{
                 overflow: 'auto', maxWidth: '100%', display: splitGuidePaths ? 'grid' : 'flex', alignItems: 'flex-start', gap: '20px',
                 gridAutoColumns: splitGuidePaths ? 'max-content' : undefined
@@ -310,8 +314,9 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                         const badge = assignmentName || destination;
                         const showDestination = badge && labelText !== 'Node';
                         const targetHighlighted = Boolean(item.container && containsTargetContainer(item.id));
-                        const highlighted = targetHighlighted || Boolean((item.moduleId && (item.moduleId === locatedModule?.id || item.moduleId === guideModuleId)) || containsLocatedModule(item.id));
-                        const highlightColor = targetHighlighted ? '#57e389' : '#00ffff';
+                        const assignmentSelected = Boolean(item.moduleId && item.moduleId === selectedModule?.id);
+                        const highlighted = targetHighlighted || assignmentSelected || Boolean((item.moduleId && (item.moduleId === locatedModule?.id || item.moduleId === guideModuleId)) || containsLocatedModule(item.id));
+                        const highlightColor = targetHighlighted ? '#57e389' : assignmentSelected ? '#ff5cdb' : '#00ffff';
                         const occupied = new Set(item.cells.map(cell => `${cell.x},${cell.y}`));
                         const label = module ? getModuleLabelArea(item.cells) : labelArea(item.cells, item.width, item.height);
                         const verticalLabel = label.width === 1 && label.height > 1;
@@ -319,13 +324,25 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                         return (
                             <button
                                 key={item.id}
-                                onClick={() => {
+                                onClick={(event) => {
                                     if (navigationLocked) return;
-                                    if (module) setSelectedModuleId(module.id);
-                                    else if (item.container) setCurrentId(item.id);
+                                    if (module) {
+                                        const start = pointerStartRef.current;
+                                        if (event.detail > 0 && (!start || start.moduleId !== module.id || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5)) return;
+                                        onModuleLeave();
+                                        const width = 240;
+                                        const height = Math.min(320, 96 + assignmentMachines.length * 36);
+                                        const anchor = event.currentTarget.getBoundingClientRect();
+                                        setAssignmentPopover({
+                                            moduleId: module.id,
+                                            x: Math.max(8, Math.min(anchor.right + 8, window.innerWidth - width - 8)),
+                                            y: Math.max(8, Math.min(anchor.top, window.innerHeight - height - 8))
+                                        });
+                                    } else if (item.container) setCurrentId(item.id);
                                 }}
                                 onMouseDown={(event) => {
                                     if (!module || navigationLocked) return;
+                                    pointerStartRef.current = { moduleId: module.id, x: event.clientX, y: event.clientY };
                                     const minX = Math.min(...item.cells.map(cell => cell.x));
                                     const minY = Math.min(...item.cells.map(cell => cell.y));
                                     onModuleDragStart(event, module, item.cells.map(cell => ({ x: cell.x - minX, y: cell.y - minY })));
@@ -421,6 +438,45 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                     </div>;
                 })}
             </div>
+            {assignmentPopover && selectedModule && <div
+                onMouseDown={() => setAssignmentPopover(null)}
+                style={{ position: 'fixed', inset: 0, zIndex: 1999 }}
+            >
+                <div
+                    role="dialog"
+                    aria-label={`Assign ${selectedModule.displayName}`}
+                    onMouseDown={event => event.stopPropagation()}
+                    style={{
+                        position: 'fixed', left: assignmentPopover.x, top: assignmentPopover.y, zIndex: 2000,
+                        width: 240, maxHeight: 'calc(100vh - 16px)', overflowY: 'auto', boxSizing: 'border-box',
+                        padding: '10px', border: '1px solid #ff8ae8', borderRadius: '7px',
+                        backgroundColor: '#18131a', color: '#eee', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.8)'
+                    }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Assign {selectedModule.displayName}</strong>
+                        <button onClick={() => setAssignmentPopover(null)} aria-label="Close assignment" style={{ marginLeft: 'auto', padding: '0 4px', border: 0, background: 'none', color: '#aaa', cursor: 'pointer', fontSize: '18px' }}>×</button>
+                    </div>
+                    {[
+                        { id: '', name: 'Anywhere' },
+                        { id: '__reserved__', name: 'Keep out of optimization' },
+                        ...assignmentMachines.filter(machine => isModuleAllowedForMachine(selectedModule, machine))
+                    ].map(option => {
+                        const selected = (moduleAssignments[selectedModule.id] || '') === option.id;
+                        return <button
+                            key={option.id}
+                            onClick={() => { onModuleAssignmentChange(selectedModule.id, option.id); setAssignmentPopover(null); }}
+                            aria-pressed={selected}
+                            autoFocus={selected}
+                            style={{
+                                display: 'block', width: '100%', padding: '7px 9px', marginTop: '4px', textAlign: 'left',
+                                border: `1px solid ${selected ? '#ff8ae8' : '#444'}`, borderRadius: '4px',
+                                backgroundColor: selected ? '#a00078' : '#292929', color: '#fff', cursor: 'pointer', fontWeight: selected ? 700 : 400
+                            }}
+                        >{option.name}</button>;
+                    })}
+                </div>
+            </div>}
         </div>
     );
 }

@@ -110,7 +110,7 @@ type MachineInstanceProps = {
     onOptimizeMachine: (id: string) => void;
     onClearMachine: (id: string) => void;
     moduleAssignments: Record<string, string>;
-    assignmentMachines: { id: string; name: string }[];
+    assignmentMachines: { id: string; name: string; moduleType?: string; furnaceModules?: FurnaceModules; alarmModule?: boolean }[];
     isAnySolving: boolean;
     canDelete: boolean;
     optimizationSeconds: number;
@@ -1162,6 +1162,7 @@ export default function ModuleInventoryUI() {
                 if (!currentTarget || currentTarget.machineId === null) {
                     if (currentDrag.sourceMachineId !== null) {
                         machinesRef.current[currentDrag.sourceMachineId]?.remove(currentDrag.item.id);
+                        if (importedFile && inventory.some(item => item.id === currentDrag.item.id)) handleModuleAssignmentChange(currentDrag.item.id, '');
                     }
                 } else {
                     const machine = machinesRef.current[currentTarget.machineId];
@@ -1474,21 +1475,13 @@ export default function ModuleInventoryUI() {
                     if (cell && cell !== 'Locked') reserved.add(cell.id);
                 });
             });
-            const unavailableRequired = Object.entries(moduleAssignments).find(([moduleId, target]) => activeIds.has(target) && reserved.has(moduleId));
-            if (unavailableRequired) {
-                const module = inventory.find(item => item.id === unavailableRequired[0]);
-                setImportError(`${module?.displayName || 'A required module'} is inside an ignored machine. Set that machine to Donate or Optimize.`);
-                globalIsSolvingRef.current = false;
-                activeMachines.forEach(([id]) => handleSolvingChange(id, false));
-                return;
-            }
             const keptOut = new Set(Object.entries(moduleAssignments).flatMap(([moduleId, target]) => target === RESERVED_ASSIGNMENT || !activeIds.has(target) ? [moduleId] : []));
 
             let optimizationSucceeded = false;
             runOptimizationWorker(
                 machinesConfig,
                 initialBoards,
-                expandedInventory.filter(item => !reserved.has(item.id) && !keptOut.has(item.id)),
+                expandedInventory.filter(item => (!reserved.has(item.id) || fixedAssignments.has(item.id)) && !keptOut.has(item.id)),
                 globalIsSolvingRef,
                 (updates) => {
                     const used = new Set<string>();
@@ -1497,7 +1490,10 @@ export default function ModuleInventoryUI() {
                         update.board.flat().forEach(cell => { if (cell && cell !== 'Locked') used.add(cell.id); });
                     });
                     Object.entries(machinesRef.current).forEach(([id, machine]) => {
-                        if (effectiveMode(id, machine) === 'donate') used.forEach(moduleId => machine.remove(moduleId));
+                        if (activeIds.has(id)) return;
+                        used.forEach(moduleId => {
+                            if (effectiveMode(id, machine) === 'donate' || fixedAssignments.has(moduleId)) machine.remove(moduleId);
+                        });
                     });
                 },
                 optimizationSeconds === 0 ? Number.POSITIVE_INFINITY : optimizationSeconds * 1000
@@ -1655,7 +1651,13 @@ export default function ModuleInventoryUI() {
     const cellSize = machines.length <= 2 ? 50 : (machines.length <= 4 ? 40 : 35);
     const currentMove = movePlan?.[moveStepIndex];
     const currentMoveModule = currentMove ? inventory.find(module => module.id === currentMove.moduleId) : undefined;
-    const assignmentMachines = useMemo(() => machines.map(machine => ({ id: machine.id, name: machine.name || 'Machine' })), [machines]);
+    const assignmentMachines = useMemo(() => machines.map(machine => ({
+        id: machine.id,
+        name: machine.name || 'Machine',
+        moduleType: machine.moduleType,
+        furnaceModules: machine.furnaceModules,
+        alarmModule: machine.alarmModule
+    })), [machines]);
     const visibleLocatedModule = locatedModule && (!currentMove || currentMove.fromId === locatedModule.source?.machineId || currentMove.fromId === locatedModule.source?.parentId)
         ? locatedModule
         : null;
@@ -2002,7 +2004,7 @@ export default function ModuleInventoryUI() {
                         title={importedFile ? 'Clear displayed Optimize and Donate boards without changing the game save or machine settings' : 'Clear every machine board'}
                         style={{ padding: '10px 18px', backgroundColor: '#444', color: '#eee', border: '1px solid #666', borderRadius: '6px', cursor: isAnySolving || movePlan ? 'not-allowed' : 'pointer', opacity: isAnySolving || movePlan ? 0.5 : 1, fontWeight: 'bold' }}
                     >
-                        {importedFile ? 'Clean Machines' : 'Clear All'}
+                        {importedFile ? 'Clean Optimize + Donate' : 'Clear All'}
                     </button>
                 {importedFile && (
                     <button
@@ -2080,7 +2082,7 @@ export default function ModuleInventoryUI() {
                 guideTargetCells={displayedTargetCells}
                 guideTargetColumns={displayedTargetColumns}
                 completedMoves={movePlan ? [...committedMoves, ...movePlan.slice(0, moveStepIndex)] : committedMoves}
-                navigationLocked={Boolean(movePlan)}
+                navigationLocked={Boolean(movePlan) || isAnySolving}
                 onModuleHover={(module, x, y, showRecycleReason) => setHoverInfo({ x, y, cell: module, stats: applyInternalEffects(module), showRecycleReason })}
                 onModuleLeave={() => setHoverInfo(null)}
                 onModuleAssignmentChange={handleModuleAssignmentChange}
