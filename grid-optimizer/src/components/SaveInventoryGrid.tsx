@@ -142,7 +142,8 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
 }) {
     const byId = useMemo(() => new Map(grid.items.map(item => [item.id, item])), [grid]);
     const [navigation, setNavigation] = useState({ grid, id: grid.rootId });
-    const [assignmentPopover, setAssignmentPopover] = useState<{ moduleId: string; x: number; y: number } | null>(null);
+    const [assignmentPopover, setAssignmentPopover] = useState<{ moduleId: string; x: number; y: number; anchor: HTMLButtonElement; offsetX: number; offsetY: number } | null>(null);
+    const assignmentPopoverRef = useRef<HTMLDivElement>(null);
     const pointerStartRef = useRef<{ moduleId: string; x: number; y: number } | null>(null);
     const selectedId = navigation.grid === grid ? navigation.id : grid.rootId;
     const guideContainerId = guideLocationId?.replace(/^save_machine_/, '');
@@ -167,9 +168,23 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
 
     useEffect(() => {
         if (!assignmentPopover) return;
-        const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setAssignmentPopover(null); };
+        const close = () => setAssignmentPopover(null);
+        const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+        const reposition = () => {
+            const popover = assignmentPopoverRef.current;
+            if (!popover) return;
+            const anchor = assignmentPopover.anchor.getBoundingClientRect();
+            popover.style.left = `${anchor.left + assignmentPopover.offsetX}px`;
+            popover.style.top = `${anchor.top + assignmentPopover.offsetY}px`;
+        };
         window.addEventListener('keydown', closeOnEscape);
-        return () => window.removeEventListener('keydown', closeOnEscape);
+        window.addEventListener('scroll', reposition, true);
+        window.addEventListener('resize', reposition);
+        return () => {
+            window.removeEventListener('keydown', closeOnEscape);
+            window.removeEventListener('scroll', reposition, true);
+            window.removeEventListener('resize', reposition);
+        };
     }, [assignmentPopover]);
 
     const path: ImportedGridItem[] = [];
@@ -333,10 +348,15 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                                         const width = 240;
                                         const height = Math.min(320, 96 + assignmentMachines.length * 36);
                                         const anchor = event.currentTarget.getBoundingClientRect();
+                                        const x = Math.max(8, Math.min(anchor.right + 8, window.innerWidth - width - 8));
+                                        const y = Math.max(8, Math.min(anchor.top, window.innerHeight - height - 8));
                                         setAssignmentPopover({
                                             moduleId: module.id,
-                                            x: Math.max(8, Math.min(anchor.right + 8, window.innerWidth - width - 8)),
-                                            y: Math.max(8, Math.min(anchor.top, window.innerHeight - height - 8))
+                                            x,
+                                            y,
+                                            anchor: event.currentTarget,
+                                            offsetX: x - anchor.left,
+                                            offsetY: y - anchor.top
                                         });
                                     } else if (item.container) setCurrentId(item.id);
                                 }}
@@ -443,6 +463,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                 style={{ position: 'fixed', inset: 0, zIndex: 1999 }}
             >
                 <div
+                    ref={assignmentPopoverRef}
                     role="dialog"
                     aria-label={`Assign ${selectedModule.displayName}`}
                     onMouseDown={event => event.stopPropagation()}
