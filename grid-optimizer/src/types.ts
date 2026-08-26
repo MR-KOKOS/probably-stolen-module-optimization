@@ -17,6 +17,7 @@ export interface InventoryItem {
     effects: [ItemEffect, ItemEffect];
     effectValues: [number, number];
     isInfinite?: boolean;
+    isLocked?: boolean;
     moduleType?: string;
     optimizable?: boolean;
     source?: {

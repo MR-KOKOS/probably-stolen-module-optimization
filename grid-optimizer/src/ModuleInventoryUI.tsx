@@ -76,6 +76,7 @@ type InventoryItemRowProps = {
     onRemove: (id: string) => void;
     onDragStart: (event: React.MouseEvent, item: InventoryItem) => void;
     onToggleInfinite?: (isInfinite: boolean) => void;
+    onToggleLock: (id: string) => void;
     readOnly?: boolean;
 };
 type MachineInstanceProps = {
@@ -121,6 +122,7 @@ const SAVE_PREFERENCES_KEY = 'optimizer_save_preferences:';
 const SAVE_ASSIGNMENTS_KEY = 'optimizer_save_assignments:';
 const RESERVED_ASSIGNMENT = '__reserved__';
 const OPTIMIZATION_SECONDS_KEY = 'optimizer_optimization_seconds';
+const MAX_VISIBLE_INVENTORY_ROWS = 255;
 const maxCustomEffectValue = (item: InventoryItem, effectIndex: 0 | 1, effects = item.effects) => {
     const stats = { ...getBaseStats(item) };
     for (let index = 0; index < effectIndex; index++) {
@@ -208,11 +210,11 @@ const DragGhost = ({ dragState, cellSize }: { dragState: DragState, cellSize: nu
     );
 };
 
-const InventoryItemRow = React.memo(({ item, isAnySolving, updateItemEffect, updateItemEffectValue, handleBlurEffectValue, onRemove, onDragStart, onToggleInfinite, readOnly = false }: InventoryItemRowProps) => {
+const InventoryItemRow = React.memo(({ item, isAnySolving, updateItemEffect, updateItemEffectValue, handleBlurEffectValue, onRemove, onDragStart, onToggleInfinite, onToggleLock, readOnly = false }: InventoryItemRowProps) => {
     return (
         <div
-            onMouseDown={(e) => item.optimizable !== false && onDragStart(e, item)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', backgroundColor: '#252526', borderRadius: '4px', borderLeft: `4px solid ${COLOR_MAP[item.color as ModuleColor]}`, cursor: isAnySolving ? 'default' : item.optimizable === false ? 'not-allowed' : 'grab' }}
+            onMouseDown={(e) => item.optimizable !== false && !item.isLocked && onDragStart(e, item)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', backgroundColor: '#252526', borderRadius: '4px', borderLeft: `4px solid ${COLOR_MAP[item.color as ModuleColor]}`, cursor: isAnySolving ? 'default' : item.optimizable === false || item.isLocked ? 'not-allowed' : 'grab', opacity: item.isLocked ? 0.65 : 1 }}
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
                 <MiniShape shape={item.shape} colorHex={COLOR_MAP[item.color as ModuleColor]} size="10px" />
@@ -274,21 +276,10 @@ const InventoryItemRow = React.memo(({ item, isAnySolving, updateItemEffect, upd
                 </div>
             </div>
             {!readOnly && (
-                <button
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => onRemove(item.id)}
-                    disabled={isAnySolving}
-                    style={{
-                        background: 'none',
-                        border: 'none',
-                        color: isAnySolving ? '#444' : '#666',
-                        cursor: isAnySolving ? 'not-allowed' : 'pointer',
-                        fontSize: '1.2em',
-                        marginLeft: '10px'
-                    }}
-                >
-                    &times;
-                </button>
+                <div onMouseDown={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '10px' }}>
+                    <button onClick={() => onToggleLock(item.id)} disabled={isAnySolving} style={{ padding: '4px 7px', border: `1px solid ${item.isLocked ? '#ff6b6b' : '#555'}`, borderRadius: '4px', background: item.isLocked ? '#4a2020' : '#292929', color: item.isLocked ? '#ff8a8a' : '#bbb', cursor: isAnySolving ? 'not-allowed' : 'pointer' }}>{item.isLocked ? 'Unlock' : 'Lock'}</button>
+                    <button onClick={() => onRemove(item.id)} disabled={isAnySolving} style={{ background: 'none', border: 'none', color: isAnySolving ? '#444' : '#666', cursor: isAnySolving ? 'not-allowed' : 'pointer', fontSize: '1.2em' }}>&times;</button>
+                </div>
             )}
         </div>
     );
@@ -334,7 +325,7 @@ const MachineInstance = React.memo(forwardRef<MachineHandle, MachineInstanceProp
     const [machineType, setMachineType] = useState('Select Machine...');
     const effectiveModuleType = machineModuleType || (machineType === 'Furnace' ? 'MODULE_TYPE_FURNACE' : machineType === 'Alarm System' ? 'MODULE_TYPE_ALARM' : undefined);
     const displayedMachineLocation = machineLocation?.replace(/^Shop Inventory\s*→\s*/, '');
-    const optimizer = useOptimizer(inventory, setInventory, machineId, getUsedItems, initialTier, initialMax, initialTarget || { Performance: null, Quality: null, Efficiency: null }, initialPriority, initialBoard, effectiveModuleType, furnaceModules, alarmModule, optimizationSeconds === 0 ? Number.POSITIVE_INFINITY : optimizationSeconds * 1000);
+    const optimizer = useOptimizer(inventory, setInventory, machineId, getUsedItems, initialTier, initialMax, initialTarget || { Performance: null, Quality: null, Efficiency: null }, initialPriority, initialBoard, effectiveModuleType, furnaceModules, alarmModule, optimizationSeconds === 0 ? Number.POSITIVE_INFINITY : optimizationSeconds * 1000, imported ? undefined : `optimizer_machine_${machineId}`);
     const [localHover, setLocalHover] = useState<(Point & { dragStartX: number; dragStartY: number }) | null>(null);
     const canOptimize = mode === 'optimize';
 
@@ -923,9 +914,14 @@ export default function ModuleInventoryUI() {
         if (inventory.every(item => !item.source)) localStorage.setItem('optimizer_inventory', JSON.stringify(inventory));
     }, [inventory]);
 
-    const [machines, setMachines] = useState<UiMachine[]>(() => [
-        { id: `m_${Math.random().toString(36).substring(2,8)}`, initialTier: 3, initialMax: { Performance: false, Quality: false, Efficiency: false }, mode: 'optimize' }
-    ]);
+    const [machines, setMachines] = useState<UiMachine[]>(() => {
+        const fallback = [{ id: `m_${Math.random().toString(36).substring(2,8)}`, initialTier: 3 as GridTier, initialMax: { Performance: false, Quality: false, Efficiency: false }, mode: 'optimize' as MachineMode }];
+        try {
+            const saved = JSON.parse(localStorage.getItem('optimizer_machine_list') || 'null');
+            const restored = Array.isArray(saved) ? saved.flatMap(entry => entry && typeof entry.id === 'string' ? [{ ...fallback[0], id: entry.id }] : []) : [];
+            return restored.length ? restored : fallback;
+        } catch { return fallback; }
+    });
     const machinesRef = useRef<Record<string, MachineHandle>>({});
     const [solvingStates, setSolvingStates] = useState<Record<string, boolean>>({});
     const [importedFile, setImportedFile] = useState<string | null>(null);
@@ -946,6 +942,10 @@ export default function ModuleInventoryUI() {
     const saveInputRef = useRef<HTMLInputElement>(null);
     const refreshSelectionRef = useRef(false);
     const importRevisionRef = useRef(0);
+
+    useEffect(() => {
+        if (!importedFile && machines.every(machine => !machine.imported)) localStorage.setItem('optimizer_machine_list', JSON.stringify(machines.map(({ id }) => ({ id }))));
+    }, [importedFile, machines]);
 
     useEffect(() => {
         localStorage.setItem(OPTIMIZATION_SECONDS_KEY, String(optimizationSeconds));
@@ -1095,14 +1095,12 @@ export default function ModuleInventoryUI() {
         localStorage.setItem(`${SAVE_PREFERENCES_KEY}${importedFile}`, JSON.stringify(saved));
     }, [importedFile]);
 
-    const inventoryGroups = inventory.reduce<Record<string, InventoryItem[]>>((groups, item) => {
-        const location = item.source?.location || 'Manual inventory';
-        (groups[location] ||= []).push(item);
-        return groups;
-    }, {});
-
     const [filterGroup, setFilterGroup] = useState<FilterGroup>('All');
     const [filterSize, setFilterSize] = useState<'All' | 3 | 4 | 5>('All');
+    const [inventoryFilterGroup, setInventoryFilterGroup] = useState<FilterGroup | 'Placed'>('All');
+    const [inventoryFilterSize, setInventoryFilterSize] = useState<'All' | 3 | 4 | 5>('All');
+    const [inventoryFilterEffect, setInventoryFilterEffect] = useState<ItemEffect | 'All'>('All');
+    const [placedModuleIds, setPlacedModuleIds] = useState<Set<string>>(new Set());
     const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
     const [locatedModuleId, setLocatedModuleId] = useState<string | null>(null);
 
@@ -1160,7 +1158,7 @@ export default function ModuleInventoryUI() {
 
             if (currentDrag) {
                 if (!currentTarget || currentTarget.machineId === null) {
-                    if (currentDrag.sourceMachineId !== null) {
+                    if (currentDrag.sourceMachineId !== null && !currentDrag.item.isLocked) {
                         machinesRef.current[currentDrag.sourceMachineId]?.remove(currentDrag.item.id);
                         if (importedFile && inventory.some(item => item.id === currentDrag.item.id)) handleModuleAssignmentChange(currentDrag.item.id, '');
                     }
@@ -1168,7 +1166,7 @@ export default function ModuleInventoryUI() {
                     const machine = machinesRef.current[currentTarget.machineId];
                     const state = machine?.getState();
                     const compatible = !state?.moduleType || currentDrag.item.moduleType === 'MODULE_TYPE_UNIVERSAL' || currentDrag.item.moduleType === state.moduleType;
-                    if (machine && compatible) {
+                    if (machine && compatible && (!currentDrag.item.isLocked || currentDrag.sourceMachineId === currentTarget.machineId)) {
                         const targetX = currentTarget.x - currentDrag.dragOffsetX;
                         const targetY = currentTarget.y - currentDrag.dragOffsetY;
 
@@ -1305,6 +1303,10 @@ export default function ModuleInventoryUI() {
         ));
     }, []);
 
+    const handleToggleLock = useCallback((itemId: string) => {
+        setInventory(current => current.map(item => item.id === itemId ? { ...item, isLocked: !item.isLocked } : item));
+    }, []);
+
     const handleUpdateItemEffect = useCallback((item: InventoryItem, effectIndex: 0 | 1, newEffect: ItemEffect) => {
         setInventory(prev => prev.map(invItem => {
             if (invItem.id === item.id) {
@@ -1361,7 +1363,7 @@ export default function ModuleInventoryUI() {
     }, []);
 
     const handleInventoryDragStart = useCallback((e: React.MouseEvent, item: InventoryItem, savedOffsets?: Point[]) => {
-        if (isAnySolving) { e.preventDefault(); return; }
+        if (isAnySolving || item.isLocked) { e.preventDefault(); return; }
         e.preventDefault();
         const offsets = savedOffsets || PRECOMPUTED_OFFSETS.get(item.shape)?.[0] || [{x: 0, y: 0}];
 
@@ -1455,7 +1457,12 @@ export default function ModuleInventoryUI() {
             const activeMachines = Object.entries(machinesRef.current).filter(([id, machine]) => effectiveMode(id, machine) === 'optimize');
             if (activeMachines.length === 0) { globalIsSolvingRef.current = false; return; }
             const activeIds = new Set(activeMachines.map(([id]) => id));
-            const fixedAssignments = new Set(Object.entries(moduleAssignments).flatMap(([moduleId, target]) => activeIds.has(target) ? [moduleId] : []));
+            const lockedTargets = new Map<string, string>();
+            Object.entries(machinesRef.current).forEach(([id, machine]) => machine.getBoard().flat().forEach(cell => {
+                if (cell && cell !== 'Locked' && cell.isLocked) lockedTargets.set(cell.id, id);
+            }));
+            const activeLocked = new Set([...lockedTargets].flatMap(([moduleId, target]) => activeIds.has(target) ? [moduleId] : []));
+            const fixedAssignments = new Set([...Object.entries(moduleAssignments).flatMap(([moduleId, target]) => activeIds.has(target) ? [moduleId] : []), ...activeLocked]);
             activeMachines.forEach(([id]) => handleSolvingChange(id, true));
 
             const machinesConfig = activeMachines.map(([id, m]) => {
@@ -1463,7 +1470,10 @@ export default function ModuleInventoryUI() {
                 return {
                     id, tier: state.tier, targetStats: state.targetStats, maximizeStats: state.maximizeStats, statPriority: state.statPriority,
                     moduleType: state.moduleType, furnaceModules: state.furnaceModules, alarmModule: state.alarmModule,
-                    requiredModuleIds: Object.entries(moduleAssignments).flatMap(([moduleId, target]) => target === id ? [moduleId] : [])
+                    requiredModuleIds: [...new Set([
+                        ...Object.entries(moduleAssignments).flatMap(([moduleId, target]) => target === id ? [moduleId] : []),
+                        ...[...lockedTargets].flatMap(([moduleId, target]) => target === id ? [moduleId] : [])
+                    ])]
                 };
             });
 
@@ -1481,7 +1491,7 @@ export default function ModuleInventoryUI() {
             runOptimizationWorker(
                 machinesConfig,
                 initialBoards,
-                expandedInventory.filter(item => (!reserved.has(item.id) || fixedAssignments.has(item.id)) && !keptOut.has(item.id)),
+                expandedInventory.filter(item => (!item.isLocked || activeLocked.has(item.id)) && (!reserved.has(item.id) || fixedAssignments.has(item.id)) && !keptOut.has(item.id)),
                 globalIsSolvingRef,
                 (updates) => {
                     const used = new Set<string>();
@@ -1632,6 +1642,7 @@ export default function ModuleInventoryUI() {
 
     const handleDeleteMachine = useCallback((machineId: string) => {
         setMachines(prev => prev.filter(m => m.id !== machineId));
+        localStorage.removeItem(`optimizer_machine_${machineId}`);
         delete machinesRef.current[machineId];
         setSolvingStates(prev => {
             const next = { ...prev };
@@ -1658,6 +1669,21 @@ export default function ModuleInventoryUI() {
         furnaceModules: machine.furnaceModules,
         alarmModule: machine.alarmModule
     })), [machines]);
+    useEffect(() => {
+        setPlacedModuleIds(new Set(Object.values(machinesRef.current).flatMap(machine => machine.getBoard().flat().flatMap(cell => cell && cell !== 'Locked' ? [cell.id] : []))));
+    }, [machines, solvingStates, dragState]);
+    const visibleInventory = importedFile ? inventory : inventory.filter(item => {
+        const template = MODULE_TEMPLATES.find(module => module.shape === item.shape && module.color === item.color);
+        if (inventoryFilterGroup === 'Placed' ? !placedModuleIds.has(item.id) : inventoryFilterGroup !== 'All' && template?.group !== inventoryFilterGroup) return false;
+        if (inventoryFilterSize !== 'All' && (PRECOMPUTED_OFFSETS.get(item.shape)?.[0]?.length || 0) !== inventoryFilterSize) return false;
+        return inventoryFilterEffect === 'All' || item.effects.includes(inventoryFilterEffect);
+    }).slice(0, MAX_VISIBLE_INVENTORY_ROWS);
+    const visibleInventoryGroups = visibleInventory.reduce<Record<string, InventoryItem[]>>((groups, item) => {
+        const location = item.source?.location || 'Manual inventory';
+        (groups[location] ||= []).push(item);
+        return groups;
+    }, {});
+    const allVisibleLocked = visibleInventory.length > 0 && visibleInventory.every(item => item.isLocked);
     const visibleLocatedModule = locatedModule && (!currentMove || currentMove.fromId === locatedModule.source?.machineId || currentMove.fromId === locatedModule.source?.parentId)
         ? locatedModule
         : null;
@@ -2158,7 +2184,7 @@ export default function ModuleInventoryUI() {
                     }}
                 >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' }}>
-                        <span style={{ color: '#888', fontSize: '0.9em' }}>{inventory.length} {importedFile ? 'Imported modules' : 'Selected'}</span>
+                        <span style={{ color: '#888', fontSize: '0.9em' }}>{importedFile ? `${inventory.length} Imported modules` : `${visibleInventory.length} of ${inventory.length} Selected`}</span>
                         {!importedFile && (
                             <button
                                 onClick={() => {
@@ -2180,8 +2206,23 @@ export default function ModuleInventoryUI() {
                         )}
                     </div>
 
+                    {!importedFile && <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                        <select aria-label="Filter inventory by group" value={inventoryFilterGroup} onChange={event => setInventoryFilterGroup(event.target.value as FilterGroup | 'Placed')} style={{ padding: '5px', background: '#292929', color: '#eee', border: '1px solid #555' }}>
+                            {['All', 'Placed', 'Performance', 'Quality', 'Efficiency', 'Special'].map(value => <option key={value}>{value}</option>)}
+                        </select>
+                        <select aria-label="Filter inventory by size" value={inventoryFilterSize} onChange={event => setInventoryFilterSize(event.target.value === 'All' ? 'All' : Number(event.target.value) as 3 | 4 | 5)} style={{ padding: '5px', background: '#292929', color: '#eee', border: '1px solid #555' }}>
+                            <option>All</option><option value="3">Size 3</option><option value="4">Size 4</option><option value="5">Size 5</option>
+                        </select>
+                        <select aria-label="Filter inventory by effect" value={inventoryFilterEffect} onChange={event => setInventoryFilterEffect(event.target.value as ItemEffect | 'All')} style={{ padding: '5px', background: '#292929', color: '#eee', border: '1px solid #555' }}>
+                            <option>All</option>{EFFECTS_LIST.filter(effect => effect !== 'None').map(effect => <option key={effect}>{effect}</option>)}
+                        </select>
+                        <button disabled={isAnySolving || visibleInventory.length === 0} onClick={() => setInventory(current => current.map(item => visibleInventory.some(visible => visible.id === item.id) ? { ...item, isLocked: !allVisibleLocked } : item))} style={{ padding: '5px 8px', background: '#292929', color: '#eee', border: '1px solid #555', cursor: isAnySolving ? 'not-allowed' : 'pointer' }}>
+                            {allVisibleLocked ? 'Unlock shown' : 'Lock shown'}
+                        </button>
+                    </div>}
+
                     <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '5px' }}>
-                        {Object.entries(inventoryGroups).map(([location, items]) => (
+                        {Object.entries(visibleInventoryGroups).map(([location, items]) => (
                             <div key={location} style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
                                 {importedFile && <div style={{ color: '#bbb', fontSize: '0.8em', fontWeight: 'bold', borderBottom: '1px solid #333', padding: '8px 0 4px' }}>{location} · {items.length}</div>}
                                 {items.map(item => (
@@ -2195,6 +2236,7 @@ export default function ModuleInventoryUI() {
                                         onRemove={handleRemoveItem}
                                         onDragStart={handleInventoryDragStart}
                                         onToggleInfinite={handleToggleInfiniteNodes}
+                                        onToggleLock={handleToggleLock}
                                         readOnly={Boolean(importedFile)}
                                     />
                                 ))}

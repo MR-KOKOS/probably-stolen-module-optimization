@@ -165,6 +165,27 @@ const inventoryForCode = (inventory: InventoryItem[], board: Board) => {
     return inventory.filter(item => !item.id.includes('_clone_') || used.has(item.id));
 };
 
+type StoredMachine = {
+    tier: GridTier;
+    targetStats: TargetStats;
+    maximizeStats: Record<keyof Stats, boolean>;
+    statPriority: Record<keyof Stats, number>;
+    boardIds: (string | 'Locked' | null)[][];
+};
+
+const loadStoredMachine = (key?: string): StoredMachine | null => {
+    if (!key) return null;
+    try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
+};
+
+const restoreBoard = (saved: StoredMachine | null, inventory: InventoryItem[], fallback: Board, tier: GridTier): Board => {
+    if (!Array.isArray(saved?.boardIds) || saved.boardIds.length !== 5 || saved.boardIds.some(row => !Array.isArray(row) || row.length !== 7)) return fallback;
+    const byId = new Map(inventory.map(item => [item.id, item]));
+    const board = emptyBoard(tier);
+    saved.boardIds.forEach((row, y) => row.forEach((id, x) => { board[y][x] = id === 'Locked' ? 'Locked' : id ? byId.get(id) || null : null; }));
+    return board;
+};
+
 export function useOptimizer(
     inventory: InventoryItem[],
     setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>,
@@ -178,14 +199,16 @@ export function useOptimizer(
     moduleType?: string,
     furnaceModules: FurnaceModules = 'none',
     alarmModule = false,
-    optimizationTimeMs = 1500
+    optimizationTimeMs = 1500,
+    storageKey?: string
 ) {
-    const [tier, setTier] = useState<GridTier>(initialTier);
-    const [targetStats, setTargetStats] = useState<TargetStats>(initialTarget);
-    const [maximizeStats, setMaximizeStats] = useState(initialMax);
-    const [statPriority, setStatPriority] = useState(initialPriority);
+    const [savedState] = useState(() => loadStoredMachine(storageKey));
+    const [tier, setTier] = useState<GridTier>(savedState?.tier ?? initialTier);
+    const [targetStats, setTargetStats] = useState<TargetStats>(savedState?.targetStats ?? initialTarget);
+    const [maximizeStats, setMaximizeStats] = useState(savedState?.maximizeStats ?? initialMax);
+    const [statPriority, setStatPriority] = useState(savedState?.statPriority ?? initialPriority);
 
-    const [board, setBoard] = useState<Board>(() => initialBoard?.map(row => [...row]) || emptyBoard(initialTier));
+    const [board, setBoard] = useState<Board>(() => restoreBoard(savedState, inventory, initialBoard?.map(row => [...row]) || emptyBoard(savedState?.tier ?? initialTier), savedState?.tier ?? initialTier));
     const boardRef = useRef(board);
     const setBoardSync = (newBoard: Board) => {
         boardRef.current = newBoard;
@@ -200,10 +223,18 @@ export function useOptimizer(
     const [solutionCode, setSolutionCode] = useState<string>('');
     const isSolvingRef = useRef(false);
 
+    useEffect(() => {
+        if (!storageKey || isSolving) return;
+        localStorage.setItem(storageKey, JSON.stringify({
+            tier, targetStats, maximizeStats, statPriority,
+            boardIds: board.map(row => row.map(cell => cell && cell !== 'Locked' ? cell.id : cell))
+        }));
+    }, [storageKey, tier, targetStats, maximizeStats, statPriority, board, isSolving]);
+
     const getAvailableInventory = useCallback(() => {
-        if (!getUsedItems || !machineId) return inventory;
-        const used = getUsedItems(machineId);
-        return inventory.filter(item => !used.has(item.id));
+        const used = machineId ? getUsedItems(machineId) : new Set<string>();
+        const onBoard = new Set(boardRef.current.flat().flatMap(cell => cell && cell !== 'Locked' ? [cell.id] : []));
+        return inventory.filter(item => !used.has(item.id) && (!item.isLocked || onBoard.has(item.id)));
     }, [getUsedItems, machineId, inventory]);
 
     const handleTierChange = (newTier: GridTier) => {
@@ -411,7 +442,8 @@ export function useOptimizer(
         setIsSolving(true);
         isSolvingRef.current = true;
 
-        const config = { id: machineId, tier, targetStats, maximizeStats, statPriority, moduleType, furnaceModules, alarmModule };
+        const requiredModuleIds = [...new Set(boardRef.current.flat().flatMap(cell => cell && cell !== 'Locked' && cell.isLocked ? [cell.id] : []))];
+        const config = { id: machineId, tier, targetStats, maximizeStats, statPriority, moduleType, furnaceModules, alarmModule, requiredModuleIds };
 
         try {
             await runOptimizationWorker([config], [boardRef.current], availableInventory, isSolvingRef, (updates) => {
