@@ -132,3 +132,42 @@ test('unknown machine panes stay separate and omit instruction notes', () => {
     assert.deepEqual(panes.map(pane => pane.node), [2, 3, 4]);
     assert.deepEqual(panes.map(({ width, height }) => [width, height]), [[1, 2], [7, 5], [6, 4]]);
 });
+
+test('imports the occupied counter as a separate inventory root', () => {
+    const main = [{
+        uuid: 0, identifier: 'save_bag', name: 'Save Bag', childItems: [],
+        itemModifiedShape: shape(0, 0, 1, 1, [1]), _keys: [], _values: []
+    }];
+    const counter = [
+        {
+            uuid: 0, identifier: 'back_inv_save_bag', name: 'Back Inv Save Bag', childItems: [1],
+            itemModifiedShape: shape(0, 0, 17, 10, Array(170).fill(1)), _keys: [], _values: []
+        },
+        {
+            uuid: 1, identifier: 'storage_bay', name: 'Storage Bay', childItems: [2],
+            itemModifiedShape: shape(9, 0, 3, 3, Array(9).fill(1)), _keys: [], _values: []
+        },
+        {
+            uuid: 2, identifier: 'system_module_performance', name: 'Performance Module', childItems: [],
+            itemShape: shape(0, 0, 2, 2, [1, 1, 1, 1]), itemModifiedShape: shape(2, 3, 2, 2, [1, 1, 1, 1]),
+            _keys: ['MODULE_TAG', 'MODULE_TYPE'],
+            _values: [value('MODULE_TAG'), value('MODULE_TYPE', 0, 'MODULE_TYPE_UNIVERSAL')]
+        }
+    ];
+    const imported = importEs3Save(JSON.stringify({ playerStore: { value: {
+        mainInvJSON: JSON.stringify({ saveItems: main }),
+        backInvJSON: JSON.stringify({ saveItems: counter })
+    } } }));
+
+    assert.equal(imported.inventoryGrid.items.find(item => item.id === imported.inventoryGrid.counterRootId)?.name, 'Counter');
+    const storage = imported.inventoryGrid.items.find(item => item.identifier === 'storage_bay');
+    assert.equal(storage?.inventoryWidth, 10);
+    assert.equal(imported.modules[0].source?.location, 'Counter → Storage Bay');
+    assert.equal(imported.modules[0].source?.parentId, storage?.id);
+
+    const withHigherMainUuid = importEs3Save(JSON.stringify({ playerStore: { value: {
+        mainInvJSON: JSON.stringify({ saveItems: [...main, { ...main[0], uuid: 50, identifier: 'mouse_trap', name: 'Mouse Trap' }] }),
+        backInvJSON: JSON.stringify({ saveItems: counter })
+    } } }));
+    assert.equal(withHigherMainUuid.modules[0].id, imported.modules[0].id);
+});

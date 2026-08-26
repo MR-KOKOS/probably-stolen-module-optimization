@@ -141,18 +141,35 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
     onModuleAssignmentChange: (moduleId: string, target: string) => void;
 }) {
     const byId = useMemo(() => new Map(grid.items.map(item => [item.id, item])), [grid]);
-    const [navigation, setNavigation] = useState({ grid, id: grid.rootId });
+    const [navigation, setNavigation] = useState({ grid, selected: { [grid.rootId]: grid.rootId, ...(grid.counterRootId ? { [grid.counterRootId]: grid.counterRootId } : {}) }, activeRootId: grid.rootId });
     const [assignmentPopover, setAssignmentPopover] = useState<{ moduleId: string; x: number; y: number; anchor: HTMLButtonElement; offsetX: number; offsetY: number } | null>(null);
     const assignmentPopoverRef = useRef<HTMLDivElement>(null);
     const pointerStartRef = useRef<{ moduleId: string; x: number; y: number } | null>(null);
-    const selectedId = navigation.grid === grid ? navigation.id : grid.rootId;
+    const selected = navigation.grid === grid ? navigation.selected : { [grid.rootId]: grid.rootId, ...(grid.counterRootId ? { [grid.counterRootId]: grid.counterRootId } : {}) };
+    const activeRootId = navigation.grid === grid ? navigation.activeRootId : grid.rootId;
+    const selectedId = selected[activeRootId] || grid.rootId;
     const guideContainerId = guideLocationId?.replace(/^save_machine_/, '');
     const currentId = guideContainerId && byId.has(guideContainerId) ? guideContainerId : selectedId;
-    const setCurrentId = (id: string) => { setAssignmentPopover(null); setNavigation({ grid, id }); };
-    const panelsRef = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        panelsRef.current?.scrollTo({ left: panelsRef.current.scrollWidth, behavior: 'smooth' });
-    }, [currentId]);
+    const pathTo = (id: string) => {
+        const result: ImportedGridItem[] = [];
+        let item = byId.get(id);
+        const seen = new Set<string>();
+        while (item && !seen.has(item.id)) {
+            seen.add(item.id);
+            result.unshift(item);
+            item = item.parentId ? byId.get(item.parentId) : undefined;
+        }
+        return result;
+    };
+    const setCurrentId = (id: string) => {
+        setAssignmentPopover(null);
+        const rootId = pathTo(id)[0]?.id || grid.rootId;
+        setNavigation(current => ({
+            grid,
+            selected: { ...(current.grid === grid ? current.selected : { [grid.rootId]: grid.rootId, ...(grid.counterRootId ? { [grid.counterRootId]: grid.counterRootId } : {}) }), [rootId]: id },
+            activeRootId: rootId
+        }));
+    };
     const moduleById = new Map(modules.map(module => [module.id, module]));
     const selectedModule = assignmentPopover ? moduleById.get(assignmentPopover.moduleId) : undefined;
     const originalModuleItems = new Map(grid.items.flatMap(item => item.moduleId ? [[item.moduleId, item] as const] : []));
@@ -187,18 +204,11 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
         };
     }, [assignmentPopover]);
 
-    const path: ImportedGridItem[] = [];
-    let cursor = byId.get(currentId);
-    const pathSeen = new Set<string>();
-    while (cursor && !pathSeen.has(cursor.id)) {
-        pathSeen.add(cursor.id);
-        path.unshift(cursor);
-        cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
-    }
+    const path = pathTo(currentId);
     const sourceContainer = guideLocationId ? byId.get(guideLocationId.replace(/^save_machine_/, '')) : undefined;
     const targetContainer = guideTargetLocationId ? byId.get(guideTargetLocationId.replace(/^save_machine_/, '')) : undefined;
     const targetPath: ImportedGridItem[] = [];
-    cursor = targetContainer;
+    let cursor = targetContainer;
     const targetPathSeen = new Set<string>();
     while (cursor && !targetPathSeen.has(cursor.id)) {
         targetPathSeen.add(cursor.id);
@@ -208,10 +218,14 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
     let commonPathLength = 0;
     while (commonPathLength < Math.min(path.length, targetPath.length) && path[commonPathLength].id === targetPath[commonPathLength].id) commonPathLength++;
     const splitGuidePaths = Boolean(sourceContainer && targetContainer && commonPathLength < Math.min(path.length, targetPath.length));
-    const panelContainers = splitGuidePaths
-        ? [...path, ...targetPath.slice(commonPathLength)]
-        : targetPath.length > path.length ? targetPath : path;
-    const guideDepth = Math.max(path.length, targetPath.length);
+    const counterRoot = grid.counterRootId ? byId.get(grid.counterRootId) : undefined;
+    const mainPath = pathTo(selected[grid.rootId] || grid.rootId);
+    const counterPath = counterRoot ? pathTo(selected[counterRoot.id] || counterRoot.id) : [];
+    const guidePaths = splitGuidePaths ? [path, targetPath] : [targetPath.length > path.length ? targetPath : path];
+    const panelRows = guideContainerId || targetContainer
+        ? [...guidePaths, ...[counterPath, mainPath].filter(rootPath => rootPath.length && !guidePaths.some(guidePath => guidePath[0]?.id === rootPath[0]?.id))]
+        : [counterPath, mainPath].filter(rootPath => rootPath.length);
+    panelRows.sort((a, b) => Number(b[0]?.id === counterRoot?.id) - Number(a[0]?.id === counterRoot?.id));
 
     const containsLocatedModule = (itemId: string) => {
         let parentId = locatedModule?.source?.parentId || null;
@@ -252,11 +266,11 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                 <div style={{ color: '#ff5cdb', marginTop: '3px' }}>Two ways to assign a module: click it and choose a machine, or drag it into a machine. Pink badges mark permanent assignments.</div>
                 {recycleReasons.size > 0 && <div style={{ color: '#a97852', marginTop: '3px' }}>Run the optimizer before removing modules. Brown modules may be worth selling or exchanging. Ruined modules can be sold or dismantled. Hover for details.</div>}
             </div>
-            <div ref={panelsRef} style={{
-                overflow: 'auto', maxWidth: '100%', display: splitGuidePaths ? 'grid' : 'flex', alignItems: 'flex-start', gap: '20px',
-                gridAutoColumns: splitGuidePaths ? 'max-content' : undefined
+            <div style={{
+                overflow: 'auto', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '20px'
             }}>
-                {panelContainers.map(container => {
+                {panelRows.map((row, rowIndex) => <div key={`${row[0]?.id}-${rowIndex}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
+                {row.map(container => {
                     const allChildren = grid.items.filter(item => item.parentId === container.id && (!item.moduleId || !virtualMoves.has(item.moduleId)));
                     virtualMoves.forEach(move => {
                         if (move.toId.replace(/^save_machine_/, '') !== container.id || move.targetCells.length === 0) return;
@@ -280,19 +294,8 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                     const panes = container.machine
                         ? MACHINE_PANES[container.identifier] || inferMachinePanes(allChildren)
                         : [{ node: -1, label: '', width: container.inventoryWidth || Math.max(1, ...allChildren.map(item => item.x + item.width)), height: container.inventoryHeight || Math.max(1, ...allChildren.map(item => item.y + item.height)) }];
-                    const sourcePathIndex = path.findIndex(item => item.id === container.id);
-                    const targetPathIndex = targetPath.findIndex(item => item.id === container.id);
-                    const sharedPanel = sourcePathIndex >= 0 && sourcePathIndex < commonPathLength;
-                    const endpointPanel = container.id === sourceContainer?.id || container.id === targetContainer?.id;
-                    const guideColumn = sharedPanel
-                        ? sourcePathIndex + 1
-                        : sourcePathIndex >= commonPathLength
-                            ? guideDepth - (path.length - sourcePathIndex) + 1
-                            : guideDepth - (targetPath.length - targetPathIndex) + 1;
                     return <div key={container.id} style={{
-                        flex: '0 0 auto',
-                        gridColumn: splitGuidePaths ? guideColumn : undefined,
-                        gridRow: splitGuidePaths ? (endpointPanel ? (container.id === sourceContainer?.id ? 1 : 2) : '1 / span 2') : undefined
+                        flex: '0 0 auto'
                     }}>
                         <div style={{ color: '#bbb', fontWeight: 'bold', fontSize: '0.85em', marginBottom: '6px' }}>{container.name}</div>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
@@ -457,6 +460,7 @@ export default function SaveInventoryGrid({ grid, modules, recycleReasons, modul
                         </div>
                     </div>;
                 })}
+                </div>)}
             </div>
             {assignmentPopover && selectedModule && <div
                 onMouseDown={() => setAssignmentPopover(null)}

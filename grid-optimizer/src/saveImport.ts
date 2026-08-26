@@ -23,7 +23,7 @@ type Raw = {
     _keys?: string[];
     _values?: RawAttribute[];
 };
-type RawRoot = { playerStore?: { value?: { mainInvJSON?: string } } };
+type RawRoot = { playerStore?: { value?: { mainInvJSON?: string; backInvJSON?: string } } };
 
 export interface ImportedMachine {
     id: string;
@@ -61,6 +61,7 @@ export interface ImportedGridItem {
 
 export interface ImportedInventoryGrid {
     rootId: string;
+    counterRootId?: string;
     items: ImportedGridItem[];
 }
 
@@ -99,6 +100,8 @@ const EFFECTS: Record<string, ItemEffect> = {
 
 const INVENTORY_SIZES: Record<string, [number, number]> = {
     save_bag: [24, 10],
+    back_inv_save_bag: [17, 10],
+    storage_bay: [10, 10],
     storage_bay_large: [17, 10]
 };
 
@@ -186,7 +189,18 @@ export function importEs3Save(text: string): ImportedSave {
     const inventoryJson = root.playerStore?.value?.mainInvJSON;
     if (typeof inventoryJson !== 'string') throw new Error('The save does not contain a player inventory.');
 
-    const items = (JSON.parse(inventoryJson).saveItems || []) as Raw[];
+    const mainItems = (JSON.parse(inventoryJson).saveItems || []) as Raw[];
+    const counterOffset = Math.max(0, ...mainItems.map(item => item.uuid)) + 1;
+    const counterItems = typeof root.playerStore?.value?.backInvJSON === 'string'
+        ? ((JSON.parse(root.playerStore.value.backInvJSON).saveItems || []) as Raw[]).map(item => ({
+            ...item,
+            uuid: counterOffset + item.uuid,
+            childItems: item.childItems?.map(uuid => counterOffset + uuid)
+        }))
+        : [];
+    const items = [...mainItems, ...counterItems];
+    const counterUuids = new Set(counterItems.map(item => item.uuid));
+    const externalId = (uuid: number) => counterUuids.has(uuid) ? `counter_${uuid - counterOffset}` : String(uuid);
     const byId = new Map<number, Raw>(items.map(item => [item.uuid, item]));
     const parentByChild = new Map<number, Raw>();
     items.forEach(parent => (parent.childItems || []).forEach((child: number) => parentByChild.set(child, parent)));
@@ -197,7 +211,7 @@ export function importEs3Save(text: string): ImportedSave {
         const seen = new Set<number>();
         while (current && !seen.has(current.uuid)) {
             seen.add(current.uuid);
-            names.unshift(current.identifier === 'save_bag' ? 'Shop Inventory' : current.name || current.identifier || `Item ${current.uuid}`);
+            names.unshift(current.identifier === 'save_bag' ? 'Shop Inventory' : current.identifier === 'back_inv_save_bag' ? 'Counter' : current.name || current.identifier || `Item ${current.uuid}`);
             current = parentByChild.get(current.uuid);
         }
         return names.join(' → ');
@@ -223,7 +237,7 @@ export function importEs3Save(text: string): ImportedSave {
         );
         const shape = raw.itemModifiedShape || {};
         return {
-            id: `save_module_${raw.uuid}`,
+            id: `save_module_${externalId(raw.uuid)}`,
             shape: moduleShape(raw),
             color: moduleColor(raw.name),
             displayName: displayName(raw.name),
@@ -234,8 +248,8 @@ export function importEs3Save(text: string): ImportedSave {
             source: {
                 uuid: raw.uuid,
                 location: parent ? pathTo(parent.uuid) : 'Unparented',
-                parentId: parent ? String(parent.uuid) : null,
-                machineId: parent && machineIds.has(parent.uuid) ? `save_machine_${parent.uuid}` : undefined,
+                parentId: parent ? externalId(parent.uuid) : null,
+                machineId: parent && machineIds.has(parent.uuid) ? `save_machine_${externalId(parent.uuid)}` : undefined,
                 x: shape['<minX>k__BackingField'] || 0,
                 y: shape['<minY>k__BackingField'] || 0
             }
@@ -264,7 +278,7 @@ export function importEs3Save(text: string): ImportedSave {
         const parent = parentByChild.get(raw.uuid);
         const shape = raw.itemModifiedShape || {};
         return {
-            id: `save_machine_${raw.uuid}`,
+            id: `save_machine_${externalId(raw.uuid)}`,
             name: raw.name || raw.identifier,
             location: `${parent ? pathTo(parent.uuid) : 'Unparented'} @ (${shape['<minX>k__BackingField']}, ${shape['<minY>k__BackingField']})`,
             tier,
@@ -285,13 +299,15 @@ export function importEs3Save(text: string): ImportedSave {
 
     const rootItem = items.find(item => item.identifier === 'save_bag') || items.find(item => !parentByChild.has(item.uuid));
     if (!rootItem) throw new Error('The save does not contain a Save Bag.');
+    const counterRoot = counterItems.find(item => item.identifier === 'back_inv_save_bag' && item.childItems?.length);
     const inventoryNodeByChild = new Map<number, number>();
     items.forEach(parent => (parent.childItems || []).forEach((child: number, index: number) => {
         const node = parent.childItemInventoryNode?.[index];
         if (typeof node === 'number') inventoryNodeByChild.set(child, node);
     }));
     const inventoryGrid = {
-        rootId: String(rootItem.uuid),
+        rootId: externalId(rootItem.uuid),
+        counterRootId: counterRoot ? externalId(counterRoot.uuid) : undefined,
         items: items.map(item => {
             const shape = item.itemModifiedShape || item.itemShape || {};
             const cells = Array.isArray(shape.data) && shape.data.some(Boolean) ? placedPoints(shape) : [{ x: 0, y: 0 }];
@@ -301,9 +317,9 @@ export function importEs3Save(text: string): ImportedSave {
             const tier = machineIds.has(item.uuid) ? Math.max(1, Math.min(3, stage === undefined ? 1 : stage + 1)) as GridTier : undefined;
             const inventorySize = INVENTORY_SIZES[item.identifier];
             return {
-                id: String(item.uuid),
-                parentId: parentByChild.has(item.uuid) ? String(parentByChild.get(item.uuid)!.uuid) : null,
-                name: item.identifier === 'save_bag' ? 'Shop Inventory' : machineNameByUuid.get(item.uuid) || item.name || item.identifier || `Item ${item.uuid}`,
+                id: externalId(item.uuid),
+                parentId: parentByChild.has(item.uuid) ? externalId(parentByChild.get(item.uuid)!.uuid) : null,
+                name: item.identifier === 'save_bag' ? 'Shop Inventory' : item.identifier === 'back_inv_save_bag' ? 'Counter' : machineNameByUuid.get(item.uuid) || item.name || item.identifier || `Item ${item.uuid}`,
                 x: shape['<minX>k__BackingField'] || 0,
                 y: shape['<minY>k__BackingField'] || 0,
                 width,
@@ -313,7 +329,7 @@ export function importEs3Save(text: string): ImportedSave {
                 machine: machineIds.has(item.uuid),
                 tier,
                 inventoryNode: inventoryNodeByChild.get(item.uuid),
-                moduleId: moduleByUuid.has(item.uuid) ? `save_module_${item.uuid}` : undefined,
+                moduleId: moduleByUuid.has(item.uuid) ? `save_module_${externalId(item.uuid)}` : undefined,
                 cells,
                 inventoryWidth: inventorySize?.[0],
                 inventoryHeight: inventorySize?.[1]
